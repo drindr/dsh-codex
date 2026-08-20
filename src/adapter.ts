@@ -10,11 +10,31 @@ import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import type { OpenAICodexCredentialStore } from './store.ts'
 import { OPENAI_CODEX_PROVIDER } from './store.ts'
-import { OpenAICodexResponseRuntime } from './responses.ts'
+import { OPENAI_CODEX_SOL_1M_MODEL, OPENAI_CODEX_SOL_1M_WIRE_MODEL, OpenAICodexResponseRuntime } from './responses.ts'
 import type { ResponseApiPreferences } from './tool-policy.ts'
 
 /** Provider idle ceiling used by the composite route. */
 export const OPENAI_CODEX_STREAM_IDLE_TIMEOUT_MS = 300_000
+
+/**
+ * The official GPT-5.6 Sol specification documents a 1,050,000-token context
+ * window, while the Codex subscription catalog bundled with pi-ai caps every
+ * model at 272K. OpenAI accepts subscription-route requests beyond the catalog
+ * value, so the route offers both: the catalog entry stays the default, and a
+ * local `gpt-5.6-sol-1m` variant exposes the full window. The alias never
+ * leaves this process — the transport rewrites it on the wire (responses.ts).
+ */
+function withCodexContextVariants(provider: Provider<'openai-codex-responses'>): Provider<'openai-codex-responses'> {
+  const base = provider.getModels.bind(provider)
+  return {
+    ...provider,
+    getModels: () => base().flatMap(model =>
+      model.id === OPENAI_CODEX_SOL_1M_WIRE_MODEL
+        ? [model, { ...model, id: OPENAI_CODEX_SOL_1M_MODEL, name: `${model.name} (1M)`, contextWindow: 1_050_000 }]
+        : [model],
+    ),
+  }
+}
 
 /**
  * Give the generic dsh adapter a request-scoped bearer-token entry without
@@ -72,7 +92,7 @@ export function createOpenAICodexAdapter(
   resolveAttachments: () => AttachmentStore | undefined,
   responsePreferences: () => ResponseApiPreferences,
 ): PiAiAdapter {
-  const provider = openaiCodexProvider()
+  const provider = withCodexContextVariants(openaiCodexProvider())
   const responses = new OpenAICodexResponseRuntime(responsePreferences)
   const profiles = new Map<string, ResolvedPiAiProviderProfile>([[OPENAI_CODEX_PROVIDER, {
     provider: OPENAI_CODEX_PROVIDER,
