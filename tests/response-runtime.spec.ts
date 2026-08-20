@@ -61,7 +61,7 @@ describe('OpenAICodexResponseRuntime transport policy', () => {
 
     const transformed = await harness.streamOptions[0]?.onPayload?.({ store: false, input: [] }, harness.model)
 
-    expect(transformed).toEqual({ store: false, input: [] })
+    expect(transformed).toEqual({ store: false, input: [], model: harness.model.id })
   })
 
   it('keeps Harness compaction calls off the conversation WebSocket chain', () => {

@@ -22,6 +22,21 @@ import type { ResponseApiPreferences } from './tool-policy.ts'
 /** Responses endpoint used by the official Codex client, including V2 compaction. */
 export const OPENAI_CODEX_RESPONSES_URL = 'https://chatgpt.com/backend-api/codex/responses'
 
+/**
+ * Local-only alias exposing the full GPT-5.6 Sol context window as a second
+ * selectable model. The Codex backend does not know this id; the transport
+ * rewrites it to OPENAI_CODEX_SOL_1M_WIRE_MODEL before any request leaves.
+ */
+export const OPENAI_CODEX_SOL_1M_MODEL = 'gpt-5.6-sol-1m'
+
+/** The model id the Codex backend accepts for the 1M Sol variant. */
+export const OPENAI_CODEX_SOL_1M_WIRE_MODEL = 'gpt-5.6-sol'
+
+/** Map a local variant alias to the model id the Codex backend accepts. */
+export function wireModelId(id: string): string {
+  return id === OPENAI_CODEX_SOL_1M_MODEL ? OPENAI_CODEX_SOL_1M_WIRE_MODEL : id
+}
+
 const CODEX_TOOL_CALL_PROVIDERS = new Set(['openai', 'openai-codex', 'opencode'])
 const COMPACTION_MARKER_OPEN = '<dsh-openai-codex-compaction-4f5cf1b7-v1>'
 const COMPACTION_MARKER_CLOSE = '</dsh-openai-codex-compaction-4f5cf1b7-v1>'
@@ -374,7 +389,7 @@ export class OpenAICodexResponseRuntime {
       onPayload: async (payload, payloadModel) => {
         if (!isRecord(payload)) throw new Error('OpenAI Codex generated a non-object Responses payload')
         const input = Array.isArray(payload['input']) ? expandNativeCompactionMarkers(payload['input']) : payload['input']
-        const transformed = { ...payload, input }
+        const transformed = { ...payload, input, model: wireModelId(model.id) }
         return options?.onPayload === undefined
           ? transformed
           : await options.onPayload(transformed, payloadModel)
@@ -433,7 +448,7 @@ export class OpenAICodexResponseRuntime {
       : model.thinkingLevelMap?.[options.reasoning] ?? options.reasoning
     const retained = retainedCompactionInput(input)
     let body: unknown = {
-      model: model.id,
+      model: wireModelId(model.id),
       store: false,
       stream: true,
       input: [...input, { type: 'compaction_trigger' }],
