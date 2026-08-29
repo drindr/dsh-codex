@@ -1,10 +1,10 @@
 /** OpenAI Codex adapter assembled from public dsh-llm-pi-ai extension points. */
 
-import { createModels } from '@earendil-works/pi-ai'
+import { createModels, defaultProviderAuthContext } from '@earendil-works/pi-ai'
 import type { MutableModels, Provider } from '@earendil-works/pi-ai'
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
 import { resolveRetryPolicy } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, PreparedAdapterCall, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -69,12 +69,30 @@ class OpenAICodexAdapter extends PiAiAdapter {
     super(options)
   }
 
-  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+  /**
+   * The seam dispatches through the prepared call, and the base implementation
+   * binds it to a private snapshot path that bypasses `stream()` — the purpose
+   * marker must wrap both entry points or a compaction request would reach the
+   * provider unmarked.
+   */
+  override async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall> {
+    const call = await super.prepareCall(provider, model, signal)
+    return {
+      model: call.model,
+      stream: options => this.withPurpose(call.stream(options), options),
+    }
+  }
+
+  override stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    return this.withPurpose(super.stream(options), options)
+  }
+
+  private async *withPurpose(inner: AsyncIterable<StreamChunk>, options: GenerateOptions): AsyncIterable<StreamChunk> {
     const release = options.purpose === 'compaction'
       ? this.responses.enterCompaction(options.sessionId === undefined ? undefined : String(options.sessionId))
       : undefined
     try {
-      for await (const chunk of super.stream(options)) yield chunk
+      for await (const chunk of inner) yield chunk
     } finally {
       release?.()
     }
@@ -98,6 +116,9 @@ export function createOpenAICodexAdapter(
     provider: OPENAI_CODEX_PROVIDER,
     displayName: 'OpenAI Codex',
     streamIdleTimeoutMs: OPENAI_CODEX_STREAM_IDLE_TIMEOUT_MS,
+    maxRequestImageBytes: 20 * 1024 * 1024,
+    requestImagePixelBudget: 2048 * 2048,
+    requestImageMaxBytes: 1024 * 1024,
     retryPolicy: resolveRetryPolicy(undefined, 'dsh-openai-codex retryPolicy'),
     configuredMaxTokens: new Map(),
     piProvider: responses.wrap(requestProvider(provider)),
@@ -107,6 +128,7 @@ export function createOpenAICodexAdapter(
   return new OpenAICodexAdapter({
     profiles: () => profiles,
     resolveApiKey: async () => (await models.getAuth(OPENAI_CODEX_PROVIDER))?.auth.apiKey,
+    auth: { credentials, authContext: defaultProviderAuthContext() },
     resolveAttachments,
   }, responses)
 }
