@@ -4,7 +4,13 @@ import { fileURLToPath } from 'node:url'
 
 export const COMPATIBILITY_SCHEMA_VERSION = 1 as const
 export const SUPPORTED_NODE_RANGE = '^22.19.0 || >=24.0.0'
-export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.1.1-rc.2'
+export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.1.2-rc.1'
+/**
+ * Every DSH plugin API version accepted by the compatibility probe, oldest
+ * first. The first entry is the minimum version used by range comparison;
+ * later same-major versions are accepted through semver precedence.
+ */
+export const SUPPORTED_DSH_PLUGIN_API_VERSIONS = ['0.1.1-rc.2', '0.1.2-rc.1'] as const
 export const SUPPORTED_PI_AI_VERSION = '0.84.4'
 export const PI_AI_PACKAGE = '@earendil-works/pi-ai'
 
@@ -73,6 +79,7 @@ export const COMPATIBILITY_CONTRACT = {
   engines: { node: SUPPORTED_NODE_RANGE },
   dshPluginApi: {
     version: SUPPORTED_DSH_PLUGIN_API_VERSION,
+    versions: SUPPORTED_DSH_PLUGIN_API_VERSIONS,
     packages: DSH_PLUGIN_API_PACKAGES,
   },
   piAi: { package: PI_AI_PACKAGE, version: SUPPORTED_PI_AI_VERSION },
@@ -85,8 +92,68 @@ interface PackageJson {
 
 const PACKAGE_JSON_SEARCH_DEPTH = 8
 
+interface SemverParts {
+  readonly major: number
+  readonly minor: number
+  readonly patch: number
+  readonly prerelease: readonly string[]
+}
+
+/** Parse a strict semver core with an optional prerelease tag; build metadata is ignored. */
+function parseSemver(value: string): SemverParts | undefined {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$/u.exec(value.trim())
+  if (match === null) return undefined
+  const major = Number(match[1])
+  const minor = Number(match[2])
+  const patch = Number(match[3])
+  if (![major, minor, patch].every(Number.isSafeInteger)) return undefined
+  return { major, minor, patch, prerelease: match[4]?.split('.') ?? [] }
+}
+
+/** Semver 2.0 precedence: negative when left < right, zero on tie, positive when left > right. */
+function compareSemver(left: SemverParts, right: SemverParts): number {
+  if (left.major !== right.major) return left.major - right.major
+  if (left.minor !== right.minor) return left.minor - right.minor
+  if (left.patch !== right.patch) return left.patch - right.patch
+  // A plain release outranks every prerelease of the same major.minor.patch.
+  if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0
+  if (left.prerelease.length === 0) return 1
+  if (right.prerelease.length === 0) return -1
+  const shared = Math.min(left.prerelease.length, right.prerelease.length)
+  for (let index = 0; index < shared; index += 1) {
+    const a = left.prerelease[index] ?? ''
+    const b = right.prerelease[index] ?? ''
+    if (a === b) continue
+    const aNumeric = /^\d+$/u.test(a)
+    const bNumeric = /^\d+$/u.test(b)
+    if (aNumeric && bNumeric) return Number(a) - Number(b)
+    // Numeric identifiers rank below alphanumeric ones.
+    if (aNumeric) return -1
+    if (bNumeric) return 1
+    return a < b ? -1 : 1
+  }
+  return left.prerelease.length - right.prerelease.length
+}
+
+/**
+ * Exact comparison for packages pinned to a single version (pi-ai adapter).
+ */
 function compareVersion(left: string, right: string): CompatibilityStatus {
   return left === right ? 'compatible' : 'incompatible'
+}
+
+/**
+ * DSH plugin API comparison: any listed version, or a same-major version at
+ * or above the oldest supported one by prerelease-aware semver precedence
+ * (so 0.1.2-rc.1 satisfies a 0.1.1-rc.2 minimum).
+ */
+function dshPluginApiStatus(installed: string): CompatibilityStatus {
+  if ((SUPPORTED_DSH_PLUGIN_API_VERSIONS as readonly string[]).includes(installed)) return 'compatible'
+  const parsed = parseSemver(installed)
+  const minimum = parseSemver(SUPPORTED_DSH_PLUGIN_API_VERSIONS[0])
+  if (parsed === undefined || minimum === undefined) return 'incompatible'
+  if (parsed.major !== minimum.major) return 'incompatible'
+  return compareSemver(parsed, minimum) >= 0 ? 'compatible' : 'incompatible'
 }
 
 function parseNodeVersion(value: string): [number, number, number] | undefined {
@@ -111,13 +178,14 @@ function nodeStatus(value: string | null | undefined): CompatibilityStatus {
 function packageEntry(
   supported: string,
   installed: string | null | undefined,
+  evaluate?: (installed: string) => CompatibilityStatus,
 ): CompatibilityEntry {
   return {
     supported,
     installed: installed ?? null,
     status: installed === undefined || installed === null || installed === ''
       ? 'unknown'
-      : compareVersion(installed, supported),
+      : (evaluate ?? (current => compareVersion(current, supported)))(installed),
   }
 }
 
@@ -140,8 +208,8 @@ export function evaluateCompatibility(input: CompatibilityEvaluationInput = {}):
   const installedNode = input.nodeVersion ?? input.node ?? input.installed?.node
   const suppliedPackages = input.packageVersions ?? input.packages ?? input.installed?.packages ?? {}
   const packages = {
-    '@deepseek-ai/dsh-llm': packageEntry(SUPPORTED_DSH_PLUGIN_API_VERSION, suppliedPackages['@deepseek-ai/dsh-llm']),
-    '@deepseek-ai/dsh-llm-pi-ai': packageEntry(SUPPORTED_DSH_PLUGIN_API_VERSION, suppliedPackages['@deepseek-ai/dsh-llm-pi-ai']),
+    '@deepseek-ai/dsh-llm': packageEntry(SUPPORTED_DSH_PLUGIN_API_VERSION, suppliedPackages['@deepseek-ai/dsh-llm'], dshPluginApiStatus),
+    '@deepseek-ai/dsh-llm-pi-ai': packageEntry(SUPPORTED_DSH_PLUGIN_API_VERSION, suppliedPackages['@deepseek-ai/dsh-llm-pi-ai'], dshPluginApiStatus),
     [PI_AI_PACKAGE]: packageEntry(SUPPORTED_PI_AI_VERSION, suppliedPackages[PI_AI_PACKAGE]),
   } as Record<CompatibilityPackageName, CompatibilityEntry>
   const node = nodeEntry(installedNode)

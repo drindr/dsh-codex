@@ -1,7 +1,7 @@
 /** Per-conversation OpenAI Codex Fast Mode control for the Composer row. */
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
-import type { SnapshotStore } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
 import { OPENAI_CODEX_FAST_MODE_PATH } from '../fast-mode-paths.ts'
 import type { OpenAICodexSettingsKey } from './locales.ts'
@@ -14,6 +14,8 @@ type Translate = (key: OpenAICodexSettingsKey, params?: Record<string, unknown>)
 export interface OpenAICodexFastModeToggleInjected {
   /** Session-scoped model directory shared with the model selector and quota. */
   readonly directory: SnapshotStore<ModelDirectoryState>
+  /** Session this composer entry was injected for (slot inject currency). */
+  readonly sessionId: string
 }
 
 interface FastModeState {
@@ -55,7 +57,7 @@ export function OpenAICodexFastModeToggle({
   directory,
   sessionId,
   t,
-}: OpenAICodexFastModeToggleInjected & { sessionId: string; t: Translate }) {
+}: OpenAICodexFastModeToggleInjected & { t: Translate }) {
   const directoryState = useSyncExternalStore(
     listener => subscribeDirectory(directory, listener),
     () => directory.getSnapshot(),

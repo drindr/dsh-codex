@@ -1,12 +1,15 @@
 /** Browser half: OpenAI Codex account management inside dsh Settings. */
 
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-tool/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-model-selection/client'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import type {} from '@deepseek-ai/dsh-api-session-controller/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { OpenAICodexSettings } from './OpenAICodexSettings.tsx'
@@ -39,11 +42,15 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(namespace) as OpenAICodexSettingsInjected['t']
   const imageUrls = new Map<string, Promise<string>>()
   const createdUrls = new Set<string>()
+  // The server-side dsh-session augmentation of Context.sessions (pulled in
+  // transitively by dsh-tools type imports) shadows the client ISessions face
+  // under skipLibCheck; the web runtime provides the ISessions service.
+  const sessions = ctx.sessions as unknown as ISessions
   const loadImage = (sessionId: SessionId, attachment: ImageAttachmentRef): Promise<string> => {
     const key = `${sessionId}:${attachment.attachmentId}`
     const cached = imageUrls.get(key)
     if (cached !== undefined) return cached
-    const session = ctx.sessions.binding(sessionId)?.session
+    const session = sessions.binding(sessionId)?.session
     if (session === undefined) return Promise.reject(new Error(`unknown session ${sessionId}`))
     const pending = session.readAttachment(attachment.attachmentId).then(result => {
       if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`)
@@ -73,8 +80,8 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
     name: 'tool.call.toolview',
     key: 'imagegen',
-    inject: (sessionId: SessionId): { loadImage: ImageLoader; t: OpenAICodexSettingsInjected['t'] } => ({
-      loadImage: attachment => loadImage(sessionId, attachment),
+    inject: (sessionId: string): { loadImage: ImageLoader; t: OpenAICodexSettingsInjected['t'] } => ({
+      loadImage: attachment => loadImage(sessionId as SessionId, attachment),
       t,
     }),
   }, ImagegenToolView))
@@ -84,8 +91,9 @@ export function apply(ctx: ClientContext): void {
       id: 'openai-codex-fast-mode',
       order: 10,
       locale: namespace,
-      inject: (sessionId): OpenAICodexFastModeToggleInjected => ({
-        directory: scope.modelDirectories.directoryFor(sessionId).store,
+      inject: (sessionId: string): OpenAICodexFastModeToggleInjected => ({
+        sessionId,
+        directory: scope.modelDirectories.directoryFor(sessionId as SessionId).store,
       }),
     }, OpenAICodexFastModeToggle))
     scope.slots.inject('conversation.input.right', () => scope.slots.register({
@@ -93,8 +101,8 @@ export function apply(ctx: ClientContext): void {
       id: 'openai-codex-quota',
       order: 20,
       locale: namespace,
-      inject: (sessionId): OpenAICodexQuotaIndicatorInjected => ({
-        directory: scope.modelDirectories.directoryFor(sessionId).store,
+      inject: (sessionId: string): OpenAICodexQuotaIndicatorInjected => ({
+        directory: scope.modelDirectories.directoryFor(sessionId as SessionId).store,
       }),
     }, OpenAICodexQuotaIndicator))
   })

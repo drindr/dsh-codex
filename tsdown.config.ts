@@ -11,11 +11,14 @@ const CLIENT_EXTERNALS = [
   'react-dom',
   'react-dom/client',
   '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-store',
+  '@deepseek-ai/dsh-session/types',
   '@deepseek-ai/dsh-client-ui-conversation/client',
   '@deepseek-ai/dsh-client-ui-model-selection/client',
   '@deepseek-ai/dsh-client-ui-settings/client',
   '@deepseek-ai/dsh-client-ui-tool/client',
+  '@deepseek-ai/dsh-client-ui-renderer/client',
+  '@deepseek-ai/dsh-api-session-controller/client',
 ] as const
 
 export default [

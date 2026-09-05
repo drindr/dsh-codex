@@ -6,10 +6,11 @@ import { Context } from '@deepseek-ai/cordis'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
-import { CallId, createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage, LlmRuntime } from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import * as OpenAICodex from '../src/index.ts'
@@ -63,6 +64,8 @@ async function setup(
   if (sandboxMode === undefined) {
     await ctx.plugin(LocalFileSystem, { cwd: workspace })
   } else {
+    // 0.1.2: ctx.sandboxPolicy requires the session-projection registry.
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SandboxPolicyService, { mode: sandboxMode, workspaceRoot: workspace })
     await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
   }
@@ -84,6 +87,10 @@ function agent(
       id: 'imagegen-session',
       events: [],
       header: { cwd: workspace },
+      // 0.1.2 session-projection reads: sandbox policy folds the mode log.
+      seq: 0,
+      inheritedEventCount: 0,
+      snapshotEvents: () => [],
       deriveMessages: () => messages,
       requestHeader: () => ({ config: { provider, model } }),
       append: () => undefined,
@@ -100,7 +107,7 @@ async function generate(
 ) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`imagegen-${++callCounter}`),
+    callId: ToolCallId(`imagegen-${++callCounter}`),
     name: OpenAICodex.IMAGEGEN_TOOL_NAME,
     arguments: args,
     agent: agent(messages, model, provider) as never,

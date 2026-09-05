@@ -37,6 +37,26 @@ describe('compatibility contract', () => {
     expect(report.packages['@earendil-works/pi-ai']).toMatchObject({ installed: '0.82.2', status: 'incompatible' })
   })
 
+  it('accepts every listed DSH plugin API version and newer same-major prereleases', () => {
+    for (const installed of ['0.1.1-rc.2', '0.1.2-rc.1', '0.1.2-rc.2', '0.1.2', '0.1.3-rc.1']) {
+      const report = evaluateCompatibility({
+        nodeVersion: 'v24.0.0',
+        packageVersions: { ...compatiblePackages, '@deepseek-ai/dsh-llm': installed },
+      })
+      expect(report.packages['@deepseek-ai/dsh-llm'].status).toBe('compatible')
+    }
+  })
+
+  it('rejects DSH plugin API versions below the supported minimum or past the major line', () => {
+    for (const installed of ['0.1.0-rc.6', '0.1.1-rc.1', '1.0.0', 'not-a-version']) {
+      const report = evaluateCompatibility({
+        nodeVersion: 'v24.0.0',
+        packageVersions: { ...compatiblePackages, '@deepseek-ai/dsh-llm': installed },
+      })
+      expect(report.packages['@deepseek-ai/dsh-llm'].status).toBe('incompatible')
+    }
+  })
+
   it('keeps missing metadata unknown rather than claiming compatibility', () => {
     const report = evaluateCompatibility({ nodeVersion: 'not-a-node-version', packageVersions: {} })
     expect(report.status).toBe('unknown')

@@ -3,3 +3,5 @@ lib/
 *.tsbuildinfo
 .openai-codex-auth.json
 dist-package/
+.npm-cache/
+.pnpm-store-local/
