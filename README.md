@@ -148,7 +148,7 @@ Keeping the stores separate prevents two clients from racing the same rotating r
 
 ## Compatibility notes
 
-- This branch targets the published DSH `0.1.1-rc.2` plugin surfaces and remains runtime-compatible with the in-development `0.1.2-alpha.2` settings API. It uses `@earendil-works/pi-ai` `0.84.4` and migrates earlier pi-ai replay envelopes while reading history so existing reasoning/tool metadata remains usable after upgrades.
+- This branch builds against DSH `0.1.2-rc.1` plugin surfaces and retains the `0.1.1-rc.2` compatibility baseline. The current build uses `@earendil-works/pi-ai` `0.85.1`; diagnostics explicitly accept `0.84.4` and `0.85.1`, not every version allowed by the broader package dependency range. The adapter migrates earlier pi-ai replay envelopes while reading history so existing reasoning/tool metadata remains usable after upgrades.
 - The plugin runs on released dsh plugin surfaces and does not require a modified Harness checkout. It can generate attachments and save local output when installed alone.
 - ChatGPT plan eligibility, model access, quotas, and backend behavior are controlled by OpenAI and may change.
 - The Codex endpoint does not enforce the ordinary Responses `max_output_tokens` field. Compaction works, but its configured summary cap cannot be imposed server-side on this route.

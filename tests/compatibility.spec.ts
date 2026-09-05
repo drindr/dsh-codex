@@ -5,6 +5,8 @@ import {
   SUPPORTED_DSH_PLUGIN_API_VERSION,
   SUPPORTED_NODE_RANGE,
   SUPPORTED_PI_AI_VERSION,
+  SUPPORTED_PI_AI_VERSIONS,
+  COMPATIBILITY_CONTRACT,
 } from '../src/compatibility.ts'
 
 const compatiblePackages = {
@@ -23,9 +25,36 @@ describe('compatibility contract', () => {
       packages: {
         '@deepseek-ai/dsh-llm': { supported: SUPPORTED_DSH_PLUGIN_API_VERSION, installed: SUPPORTED_DSH_PLUGIN_API_VERSION, status: 'compatible' },
         '@deepseek-ai/dsh-llm-pi-ai': { supported: SUPPORTED_DSH_PLUGIN_API_VERSION, installed: SUPPORTED_DSH_PLUGIN_API_VERSION, status: 'compatible' },
-        '@earendil-works/pi-ai': { supported: SUPPORTED_PI_AI_VERSION, installed: SUPPORTED_PI_AI_VERSION, status: 'compatible' },
+        '@earendil-works/pi-ai': { supported: SUPPORTED_PI_AI_VERSIONS.join(' || '), installed: SUPPORTED_PI_AI_VERSION, status: 'compatible' },
       },
     })
+  })
+
+  it('accepts the legacy and current pi-ai releases with either supported DSH API', () => {
+    expect(COMPATIBILITY_CONTRACT.piAi.versions).toEqual(['0.84.4', '0.85.1'])
+    for (const dsh of ['0.1.1-rc.2', '0.1.2-rc.1']) {
+      for (const piAi of ['0.84.4', '0.85.1']) {
+        const report = evaluateCompatibility({
+          nodeVersion: 'v24.0.0',
+          packageVersions: {
+            '@deepseek-ai/dsh-llm': dsh,
+            '@deepseek-ai/dsh-llm-pi-ai': dsh,
+            '@earendil-works/pi-ai': piAi,
+          },
+        })
+        expect(report.status).toBe('compatible')
+      }
+    }
+  })
+
+  it('does not claim compatibility for unverified pi-ai versions', () => {
+    for (const installed of ['0.84.3', '0.84.5', '0.85.0', '0.85.1-rc.1', '0.85.2', '0.86.0', '1.0.0', 'not-a-version']) {
+      const report = evaluateCompatibility({
+        nodeVersion: 'v24.0.0',
+        packageVersions: { ...compatiblePackages, '@earendil-works/pi-ai': installed },
+      })
+      expect(report.packages['@earendil-works/pi-ai'].status).toBe('incompatible')
+    }
   })
 
   it('marks a known version mismatch incompatible', () => {

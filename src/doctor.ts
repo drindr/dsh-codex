@@ -4,6 +4,7 @@ import { lstat } from 'node:fs/promises'
 import { openAICodexAuthPath, OPENAI_CODEX_PROVIDER } from './store.ts'
 import {
   detectCompatibility,
+  SUPPORTED_PI_AI_VERSION,
   type CompatibilityDetectionOptions,
   type CompatibilityReport,
 } from './compatibility.ts'
@@ -92,7 +93,7 @@ export async function diagnoseOpenAICodex(
   if (providerConflict) hints.push(openAICodexConflictMessage())
   if (!providerConflict) hints.push('If Harness reports a duplicate openai-codex adapter, remove the legacy bundle or manual provider row.')
   if (compatibility.status === 'incompatible') {
-    hints.push('Compatibility mismatch: install the declared DSH plugin API versions and pin @earendil-works/pi-ai to 0.84.4, then run doctor again; no files are changed automatically.')
+    hints.push(`Compatibility mismatch: install the declared DSH plugin API versions and pin @earendil-works/pi-ai to ${SUPPORTED_PI_AI_VERSION}, then run doctor again; no files are changed automatically.`)
   } else if (compatibility.status === 'unknown') {
     hints.push('Compatibility is unknown: verify the declared DSH plugin API and @earendil-works/pi-ai versions, then run doctor again.')
   }

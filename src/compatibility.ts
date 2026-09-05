@@ -11,7 +11,9 @@ export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.1.2-rc.1'
  * later same-major versions are accepted through semver precedence.
  */
 export const SUPPORTED_DSH_PLUGIN_API_VERSIONS = ['0.1.1-rc.2', '0.1.2-rc.1'] as const
-export const SUPPORTED_PI_AI_VERSION = '0.84.4'
+export const SUPPORTED_PI_AI_VERSION = '0.85.1'
+/** Explicitly supported releases; do not infer compatibility across pi-ai minor versions. */
+export const SUPPORTED_PI_AI_VERSIONS = ['0.84.4', SUPPORTED_PI_AI_VERSION] as const
 export const PI_AI_PACKAGE = '@earendil-works/pi-ai'
 
 export const DSH_PLUGIN_API_PACKAGES = [
@@ -73,7 +75,7 @@ export interface CompatibilityDetectionOptions extends CompatibilityEvaluationIn
   readPackageVersion?: (name: CompatibilityPackageName) => string | null | undefined | Promise<string | null | undefined>
 }
 
-/** Public contract data mirrored by compatibility.json without importing JSON at runtime. */
+/** Public compatibility contract for diagnostics and callers. */
 export const COMPATIBILITY_CONTRACT = {
   schemaVersion: COMPATIBILITY_SCHEMA_VERSION,
   engines: { node: SUPPORTED_NODE_RANGE },
@@ -82,7 +84,7 @@ export const COMPATIBILITY_CONTRACT = {
     versions: SUPPORTED_DSH_PLUGIN_API_VERSIONS,
     packages: DSH_PLUGIN_API_PACKAGES,
   },
-  piAi: { package: PI_AI_PACKAGE, version: SUPPORTED_PI_AI_VERSION },
+  piAi: { package: PI_AI_PACKAGE, version: SUPPORTED_PI_AI_VERSION, versions: SUPPORTED_PI_AI_VERSIONS },
 } as const
 
 interface PackageJson {
@@ -210,7 +212,11 @@ export function evaluateCompatibility(input: CompatibilityEvaluationInput = {}):
   const packages = {
     '@deepseek-ai/dsh-llm': packageEntry(SUPPORTED_DSH_PLUGIN_API_VERSION, suppliedPackages['@deepseek-ai/dsh-llm'], dshPluginApiStatus),
     '@deepseek-ai/dsh-llm-pi-ai': packageEntry(SUPPORTED_DSH_PLUGIN_API_VERSION, suppliedPackages['@deepseek-ai/dsh-llm-pi-ai'], dshPluginApiStatus),
-    [PI_AI_PACKAGE]: packageEntry(SUPPORTED_PI_AI_VERSION, suppliedPackages[PI_AI_PACKAGE]),
+    [PI_AI_PACKAGE]: packageEntry(
+      SUPPORTED_PI_AI_VERSIONS.join(' || '),
+      suppliedPackages[PI_AI_PACKAGE],
+      installed => (SUPPORTED_PI_AI_VERSIONS as readonly string[]).includes(installed) ? 'compatible' : 'incompatible',
+    ),
   } as Record<CompatibilityPackageName, CompatibilityEntry>
   const node = nodeEntry(installedNode)
   return {
