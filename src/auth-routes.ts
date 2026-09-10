@@ -361,16 +361,15 @@ function exactOrigin(
   rawOrigin: string
 ): boolean {
   try {
-    const encrypted =
-      (req.socket as IncomingMessage["socket"] & { encrypted?: boolean })
-        .encrypted === true;
-    const effective = normalizeTrustedOrigin(
-      `${encrypted ? "https" : "http"}://${rawHost}`
-    );
-    return normalizeTrustedOrigin(rawOrigin) === effective;
+    return normalizeTrustedOrigin(rawOrigin) === effectiveOrigin(req, rawHost);
   } catch {
     return false;
   }
+}
+
+function loopbackPeer(req: IncomingMessage): boolean {
+  const remote = req.socket.remoteAddress;
+  return remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
 }
 
 function effectiveOrigin(
@@ -381,9 +380,17 @@ function effectiveOrigin(
     const encrypted =
       (req.socket as IncomingMessage["socket"] & { encrypted?: boolean })
         .encrypted === true;
-    return normalizeTrustedOrigin(
-      `${encrypted ? "https" : "http"}://${rawHost}`
-    );
+    let protocol = encrypted ? "https" : "http";
+    const forwardedProto = req.headers["x-forwarded-proto"];
+    if (forwardedProto !== undefined) {
+      // Support same-device TLS termination only. The proxy must overwrite this
+      // header and preserve the public Host (including any non-default port).
+      // Never infer authority from X-Forwarded-Host or a multi-hop header list.
+      if (!loopbackPeer(req) ||
+          (forwardedProto !== "http" && forwardedProto !== "https")) return undefined;
+      protocol = forwardedProto;
+    }
+    return normalizeTrustedOrigin(`${protocol}://${rawHost}`);
   } catch {
     return undefined;
   }
@@ -410,9 +417,7 @@ export async function trustedRequestDecision(
   req: IncomingMessage,
   trustedOrigins: OpenAICodexTrustedOriginsStore = new OpenAICodexTrustedOriginsStore()
 ): Promise<TrustedRequestDecision> {
-  const remote = req.socket.remoteAddress;
-  const localPeer =
-    remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+  const localPeer = loopbackPeer(req);
   const fetchSite: unknown = req.headers["sec-fetch-site"];
   const crossSite =
     typeof fetchSite === "string"
@@ -426,7 +431,11 @@ export async function trustedRequestDecision(
   if (origin === undefined) return { trusted: false, error: "forbidden" };
   if (!sameOriginMetadata(req, host))
     return { trusted: false, error: "forbidden" };
-  if (localPeer && loopbackHost(host)) return { trusted: true };
+  // A proxied request must never inherit automatic localhost approval.
+  if (localPeer && loopbackHost(host) &&
+      req.headers["x-forwarded-proto"] === undefined &&
+      req.headers["x-forwarded-host"] === undefined &&
+      req.headers.forwarded === undefined) return { trusted: true };
   try {
     if (await trustedOrigins.has(origin)) return { trusted: true };
   } catch {

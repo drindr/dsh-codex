@@ -33,6 +33,8 @@ Open **Settings → OpenAI Codex → Sign in with ChatGPT**. The plugin opens Op
 
 Loopback Web pages are trusted automatically. If dsh runs on another machine, the account page shows the exact origin command that must be approved on the dsh host, for example `dsh plugin --profile web exec dsh-openai-codex trust-origin http://host:port`. The allowlist is exact-origin, stored separately from OAuth credentials, and can be inspected or revoked with `trusted-origins` and `untrust-origin`.
 
+For HTTPS termination by a **same-device reverse proxy**, connect the upstream to `127.0.0.1` or `::1`, preserve the public `Host` (including a non-default port), and **overwrite** `X-Forwarded-Proto` with the browser-facing scheme. Caddy's standard `reverse_proxy 127.0.0.1:3080` supplies these headers. For nginx use `proxy_set_header Host $http_host;` and `proxy_set_header X-Forwarded-Proto $scheme;`. Approve the external **HTTPS** origin, not the HTTP upstream. Forwarded scheme metadata is accepted only from loopback peers, must be a single `http` or `https` value, and never grants automatic localhost approval; the exact origin still requires device approval. `X-Forwarded-Host` is not used to choose the origin. Proxies on other machines/container networks are not supported by this loopback-only policy. Keep the upstream private and ensure the proxy overwrites rather than passes through client-supplied scheme headers.
+
 The CLI remains available for terminal and headless installations:
 
 ```sh
