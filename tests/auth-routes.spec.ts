@@ -103,18 +103,23 @@ function request(options: {
   method?: string
   remoteAddress?: string
   host?: string
-  origin?: string
+  origin?: string | undefined
   fetchSite?: string
+  forwardedProto?: string | string[] | undefined
+  forwardedHost?: string
+  encrypted?: boolean
   body?: string
 }): IncomingMessage {
   return {
     method: options.method ?? 'GET',
     ...options.body === undefined ? {} : { body: options.body },
-    socket: { remoteAddress: options.remoteAddress ?? '127.0.0.1' },
+    socket: { remoteAddress: options.remoteAddress ?? '127.0.0.1', encrypted: options.encrypted },
     headers: {
       host: options.host ?? '127.0.0.1:3081',
       ...options.origin === undefined ? {} : { origin: options.origin },
       ...options.fetchSite === undefined ? {} : { 'sec-fetch-site': options.fetchSite },
+      ...options.forwardedProto === undefined ? {} : { 'x-forwarded-proto': options.forwardedProto },
+      ...options.forwardedHost === undefined ? {} : { 'x-forwarded-host': options.forwardedHost },
     },
   } as unknown as IncomingMessage
 }
@@ -365,6 +370,54 @@ describe('OpenAI Codex Web OAuth boundary', () => {
     expect(mocked.status).not.toHaveBeenCalled()
     expect(mocked.login).not.toHaveBeenCalled()
     expect(mocked.logout).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['GET without Origin', undefined, 'GET', 'debrin.inside.drin.top'],
+    ['POST with Origin', 'https://debrin.inside.drin.top', 'POST', 'debrin.inside.drin.top'],
+    ['explicit default port', 'https://debrin.inside.drin.top', 'POST', 'debrin.inside.drin.top:443'],
+    ['non-default port', 'https://debrin.inside.drin.top:8443', 'POST', 'debrin.inside.drin.top:8443'],
+  ])('requires live explicit approval behind a loopback TLS proxy: %s', async (_label, origin, method, host) => {
+    root = await mkdtemp(join(tmpdir(), 'dsh-auth-proxy-'))
+    const origins = new OpenAICodexTrustedOriginsStore(join(root, 'origins.json'))
+    const req = request({ host, origin, method, forwardedProto: 'https', fetchSite: 'same-origin' })
+    await expect(trustedRequestDecision(req, origins)).resolves.toEqual({ trusted: false, error: REMOTE_WEB_ORIGIN_NOT_TRUSTED })
+    await origins.trust(`https://${host}`)
+    await expect(trustedRequestDecision(req, origins)).resolves.toEqual({ trusted: true })
+    await origins.untrust(`https://${host}`)
+    await expect(trustedRequestDecision(req, origins)).resolves.toEqual({ trusted: false, error: REMOTE_WEB_ORIGIN_NOT_TRUSTED })
+  })
+
+  it.each([
+    ['untrusted proxy peer', { remoteAddress: '192.168.1.8' }],
+    ['cross-site request', { fetchSite: 'cross-site' }],
+    ['wrong Origin host', { origin: 'https://attacker.example' }],
+    ['wrong Origin port', { origin: 'https://debrin.inside.drin.top:8443' }],
+    ['wrong Origin scheme', { origin: 'http://debrin.inside.drin.top' }],
+    ['null Origin', { origin: 'null' }],
+    ['forwarded host spoof', { host: 'attacker.example', forwardedHost: 'debrin.inside.drin.top' }],
+    ['multiple protocols', { forwardedProto: 'https, http' }],
+    ['array protocol', { forwardedProto: ['https'] }],
+    ['invalid protocol', { forwardedProto: 'wss' }],
+    ['empty protocol', { forwardedProto: '' }],
+    ['plaintext does not inherit HTTPS approval', { forwardedProto: 'http', origin: undefined }],
+    ['missing protocol does not inherit HTTPS approval', { forwardedProto: undefined, origin: undefined }],
+    ['rewritten loopback Host is not automatically trusted', { host: '127.0.0.1:3081', origin: undefined }],
+  ])('rejects proxy boundary violations: %s', async (_label, overrides) => {
+    const origins = { has: async (origin: string) => origin === 'https://debrin.inside.drin.top' } as OpenAICodexTrustedOriginsStore
+    const req = request({
+      host: 'debrin.inside.drin.top', origin: 'https://debrin.inside.drin.top',
+      forwardedProto: 'https', fetchSite: 'same-origin', ...overrides,
+    })
+    expect((await trustedRequestDecision(req, origins)).trusted).toBe(false)
+  })
+
+  it('keeps native HTTPS working without proxy headers and fails closed on store errors', async () => {
+    const req = request({ host: 'debrin.inside.drin.top', origin: 'https://debrin.inside.drin.top', encrypted: true })
+    const origins = { has: async (origin: string) => origin === 'https://debrin.inside.drin.top' } as OpenAICodexTrustedOriginsStore
+    await expect(trustedRequestDecision(req, origins)).resolves.toEqual({ trusted: true })
+    const broken = { has: async () => { throw new Error('malformed sidecar') } } as unknown as OpenAICodexTrustedOriginsStore
+    await expect(trustedRequestDecision(req, broken)).resolves.toEqual({ trusted: false, error: 'forbidden' })
   })
 
   it('rejects a DNS-rebinding Host even when the peer and browser Origin agree', async () => {
