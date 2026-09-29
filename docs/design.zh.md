@@ -10,7 +10,9 @@ Status: implemented
 
 ## 认证
 
-插件把 OAuth 端点、PKCE／device code 行为、account id 提取、token 刷新和 Codex 请求认证交给 dsh 基础 bundle 提供的 pi-ai Codex provider。用户可以从插件的设置页面或 profile 内的 `dsh-codex` 可执行文件启动同一套登录生命周期。Web 认证路由默认信任回环地址上的同源请求；远端页面只有在设备所有者把完整 origin 加入独立 allowlist 后才可访问。路由返回 `no-store` JSON，且绝不暴露 token。账号页面会在不发送模型请求的情况下读取固定的 ChatGPT Codex usage 端点，把服务端用量转换为剩余百分比进度条；只有响应包含 credit 或 workspace limit 数值时才显示精确额度。
+插件仍使用 pi-ai 的 Codex provider 完成模型鉴权和凭据存储。设置页与 TUI 登录路径以插件专属 fetch 实现同样的浏览器及设备码交换，使所选 Codex 代理覆盖首次 OAuth 请求；独立 CLI 的浏览器登录仍使用 pi-ai 流程。用户可以从设置页面或 profile 内的 `dsh-codex` 可执行文件发起登录。Web 认证路由默认信任回环地址上的同源请求；远端页面只有在设备所有者把完整 origin 加入独立 allowlist 后才可访问。路由返回 `no-store` JSON，且绝不暴露 token。账号页面会在不发送模型请求的情况下读取固定的 ChatGPT Codex usage 端点，把服务端用量转换为剩余百分比进度条；只有响应包含 credit 或 workspace limit 数值时才显示精确额度。
+
+终端入口继续通过现有 Cordis 命令服务执行命令，并通过 dsh-tui 可选的公开服务贡献补全与标量设置元数据。主插件的 Loader 行 ID 是唯一设置命名空间；Web 与 TUI 读写同一份 volatile 偏好。Web 入口不导入 dsh-tui 或 dsh-std 运行时包。
 
 凭据以带版本的 JSON 文档存储在 `$DSH_HOME/.openai-codex-auth.json`。文件采用原子写入，跨进程锁覆盖登录、刷新和登出。该存储有意与 `~/.codex/auth.json` 分离；如果两个独立写入的客户端共享会轮换的 refresh token，其中任一方都可能使另一方的凭据失效。
 

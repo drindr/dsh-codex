@@ -1,5 +1,7 @@
 import type { OAuthCredential } from '@earendil-works/pi-ai'
 import { openaiCodexProvider as piOpenaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import { loginOpenAICodexDeviceCode } from './oauth-device-code.ts'
+import { loginOpenAICodexBrowser } from './oauth-browser.ts'
 
 // Match pi-ai 0.85.1's Codex OAuth client and refresh grant. Keep login UI,
 // cancellation, auth resolution and expiry scheduling owned by pi-ai.
@@ -67,7 +69,30 @@ export function openaiCodexProvider(requestFetch?: typeof globalThis.fetch): Ret
         ...oauth,
         refresh: (credential, signal) => refreshOpenAICodexCredential(credential, signal, requestFetch),
         async login(interaction) {
-          const credential = await oauth.login(interaction)
+          const transport = requestFetch ?? globalThis.fetch
+          const method = await interaction.prompt({
+            type: 'select',
+            message: 'Select OpenAI Codex login method:',
+            options: [
+              { id: 'browser', label: 'Browser login' },
+              { id: 'device_code', label: 'Device code login' },
+            ],
+          })
+          let credential: OAuthCredential
+          if (method === 'device_code') {
+            credential = await loginOpenAICodexDeviceCode(interaction, transport)
+          } else if (method === 'browser' && requestFetch !== undefined) {
+            credential = await loginOpenAICodexBrowser(interaction, transport)
+          } else if (method === 'browser') {
+            credential = await oauth.login({
+              ...interaction,
+              prompt: (prompt) => prompt.type === 'select'
+                ? Promise.resolve('browser')
+                : interaction.prompt(prompt),
+            })
+          } else {
+            throw new Error(`Unknown OpenAI Codex login method: ${method}`)
+          }
           // pi-ai's code exchange also drops id_token. One refresh obtains the
           // complete set before Models.login persists anything to the store.
           return refreshOpenAICodexCredential(credential, AbortSignal.any([

@@ -134,8 +134,8 @@ Do not report OAuth URLs, authorization codes, token timestamps, account ids, or
 - **Client entry missing:** confirm the installed package contains `lib/client.js`, restart dsh, and repeat composition validation.
 - **Duplicate provider:** remove only a manually configured `llm-pi-ai.providers.openai-codex` route.
 - **401/403 after login:** run the dedicated login again; do not copy Codex CLI credentials.
-- **OAuth callback cannot bind:** retry with `--device-code`.
-- **Browser account route returns 403:** browser login is loopback-only; use CLI login on the dsh host.
+- **OAuth callback cannot bind:** choose **Device code** in Settings or retry CLI login with `--device-code`.
+- **Remote account route returns 403:** approve the exact Web origin on the dsh host with `trust-origin`, then use Device code when the browser is remote.
 - **Profile patch parse failure:** repair only the `llm-openai-codex` row, preserve unrelated rows, and rerun `--dump-config`.
 - **Image refusal:** select a Codex model whose catalog explicitly declares image input.
 - **Unknown `web/search-model-request`:** this event came from the discontinued fork implementation. Ask before deleting or migrating the named session; never alter all sessions automatically.

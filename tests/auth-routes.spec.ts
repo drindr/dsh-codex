@@ -427,10 +427,10 @@ describe('OpenAI Codex Web OAuth boundary', () => {
     interaction.notify({ type: 'auth_url', url: 'https://auth.openai.com/authorize' })
 
     await expect(Promise.all([first, second])).resolves.toEqual([
-      { url: 'https://auth.openai.com/authorize' },
-      { url: 'https://auth.openai.com/authorize' },
+      { method: 'browser', url: 'https://auth.openai.com/authorize' },
+      { method: 'browser', url: 'https://auth.openai.com/authorize' },
     ])
-    await expect(auth.signIn()).resolves.toEqual({ url: 'https://auth.openai.com/authorize' })
+    await expect(auth.signIn()).resolves.toEqual({ method: 'browser', url: 'https://auth.openai.com/authorize' })
     expect(mocked.login).toHaveBeenCalledOnce()
     completion.resolve()
     await completion.promise
@@ -525,7 +525,7 @@ describe('OpenAI Codex Web OAuth boundary', () => {
     if (interaction === undefined) throw new Error('login interaction was not captured')
     interaction.notify({ type: 'auth_url', url: 'https://auth.openai.com/authorize' })
 
-    await expect(challenge).resolves.toEqual({ url: 'https://auth.openai.com/authorize' })
+    await expect(challenge).resolves.toEqual({ method: 'browser', url: 'https://auth.openai.com/authorize' })
     await vi.waitFor(() => { expect(interaction?.signal?.aborted).toBe(true) })
     await auth.dispose()
     await expect(auth.status()).resolves.toEqual({
@@ -548,6 +548,39 @@ describe('OpenAI Codex Web OAuth boundary', () => {
       usage: { rateLimits: [] },
     })
     expect(mocked.status).toHaveBeenCalled()
+  })
+
+  it('cancels a pending login without deleting the credential', async () => {
+    mocked.login.mockImplementation((interaction: AuthInteraction) => abortableLogin(interaction))
+    const auth = new OpenAICodexWebAuth(store)
+    const challenge = auth.signIn('device_code')
+    await auth.cancel()
+    await expect(challenge).rejects.toThrow(/sign-in cancelled/u)
+    expect(mocked.logout).not.toHaveBeenCalled()
+    await expect(auth.status()).resolves.toEqual({ status: 'signed-out' })
+  })
+
+  it('accepts a device-code challenge and reads a credential written after an earlier error', async () => {
+    let interaction: AuthInteraction | undefined
+    mocked.login.mockImplementation((next: AuthInteraction) => {
+      interaction = next
+      return abortableLogin(next)
+    })
+    const auth = new OpenAICodexWebAuth(store, { challengeTimeoutMs: 5 })
+    const failed = auth.signIn()
+    await expect(failed).rejects.toThrow(/authorization URL/u)
+    await auth.dispose()
+    mocked.login.mockImplementation((next: AuthInteraction) => {
+      interaction = next
+      return abortableLogin(next)
+    })
+    const challenge = auth.signIn('device_code')
+    if (interaction === undefined) throw new Error('login interaction was not captured')
+    interaction.notify({ type: 'device_code', verificationUri: 'https://auth.openai.com/codex/device', userCode: 'ABCD-EFGH', expiresInSeconds: 900 })
+    await expect(challenge).resolves.toEqual({ method: 'device_code', verificationUri: 'https://auth.openai.com/codex/device', userCode: 'ABCD-EFGH', expiresInSeconds: 900 })
+    await auth.dispose()
+    mocked.status.mockResolvedValue({ authenticated: true })
+    await expect(auth.status()).resolves.toEqual({ status: 'signed-in', usage: { rateLimits: [] } })
   })
 
   it('reports reauth-required without logging out or starting OAuth', async () => {

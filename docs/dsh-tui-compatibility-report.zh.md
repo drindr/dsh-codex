@@ -159,7 +159,7 @@ dsh plugin --profile dsh-tui exec dsh-codex status
 
 使用单一 `/codex` 命名空间可以避开 TUI 现有 `/login`、`/logout` 的 DeepSeek 语义，也能被 Web 或其他命令型前端复用。命令返回普通 `CommandResult`，dsh-tui 已经会合并 command registry 中的外部命令。
 
-登录流程建议复用现有 OAuth 生命周期：打开系统浏览器、立即在命令结果中显示非敏感状态，回调完成后写入同一 credential store。登录操作需要由插件 lifecycle 持有，TUI 切会话时不能取消它。device-code 可以作为 `/codex login device` 的无浏览器路径。
+登录沿用同一份 OAuth 凭据：`/codex login browser` 显示授权链接，同机浏览器通过 localhost 回调完成；`/codex login device` 显示验证网址和设备码，适用于远端终端。登录操作由插件生命周期持有，TUI 切换会话不会取消它。
 
 这是 dsh-codex 仓库内收益最高的一项改动，也不需要依赖 dsh-tui 包。
 

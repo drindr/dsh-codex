@@ -22,6 +22,7 @@ import type { OpenAICodexImageModel } from "../image-model.ts";
 
 const STATUS_PATH = "/plugins/dsh-openai-codex/auth/status";
 const LOGIN_PATH = "/plugins/dsh-openai-codex/auth/login";
+const CANCEL_PATH = "/plugins/dsh-openai-codex/auth/cancel";
 const LOGOUT_PATH = "/plugins/dsh-openai-codex/auth/logout";
 const IMAGE_TOOLS_PATH = "/plugins/dsh-openai-codex/image-tools";
 const RESPONSE_API_PATH = "/plugins/dsh-openai-codex/response-api";
@@ -43,9 +44,10 @@ type AccountStatus =
   | { status: "remote-web-origin-not-trusted" }
   | { status: "error"; message: string };
 
-interface LoginChallenge {
-  url: string;
-}
+type LoginChallenge =
+  | { method: "browser"; url: string }
+  | { method: "device_code"; verificationUri: string; userCode: string; expiresInSeconds?: number };
+type LoginMethod = LoginChallenge["method"];
 
 /** Dependencies injected by the browser plugin entry. */
 export interface OpenAICodexSettingsInjected {
@@ -694,6 +696,7 @@ export function OpenAICodexSettings({ t }: OpenAICodexSettingsProps) {
     throw new Error("OpenAI Codex settings requires its translation function");
   const [status, setStatus] = useState<AccountStatus>({ status: "loading" });
   const [busy, setBusy] = useState(false);
+  const [challenge, setChallenge] = useState<LoginChallenge | undefined>();
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
   const [imageTools, setImageTools] = useState<
@@ -742,7 +745,9 @@ export function OpenAICodexSettings({ t }: OpenAICodexSettingsProps) {
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await jsonRequest<AccountStatus>(STATUS_PATH));
+      const next = await jsonRequest<AccountStatus>(STATUS_PATH);
+      setStatus(next);
+      if (next.status !== "signing-in") setChallenge(undefined);
     } catch (error: unknown) {
       setStatus(
         error instanceof AccountRequestError &&
@@ -857,20 +862,13 @@ export function OpenAICodexSettings({ t }: OpenAICodexSettingsProps) {
     };
   }, [refresh, status.status]);
 
-  const signIn = async (): Promise<void> => {
-    const popup = window.open("about:blank", "_blank");
-    if (popup !== null) popup.opener = null;
+  const signIn = async (method: LoginMethod): Promise<void> => {
     setBusy(true);
+    setChallenge(undefined);
     setStatus({ status: "signing-in" });
     try {
-      const challenge = await jsonRequest<LoginChallenge>(LOGIN_PATH, "POST");
-      if (popup === null) {
-        setStatus({ status: "error", message: t("popupBlocked") });
-        return;
-      }
-      popup.location.replace(challenge.url);
+      setChallenge(await jsonRequest<LoginChallenge>(LOGIN_PATH, "POST", { method }));
     } catch (error: unknown) {
-      popup?.close();
       setStatus(
         error instanceof AccountRequestError &&
           error.code === "remote-web-origin-not-trusted"
@@ -888,6 +886,7 @@ export function OpenAICodexSettings({ t }: OpenAICodexSettingsProps) {
 
   const signOut = async (): Promise<void> => {
     setBusy(true);
+    setChallenge(undefined);
     try {
       await jsonRequest<{ ok: true }>(LOGOUT_PATH, "POST");
       setStatus({ status: "signed-out" });
@@ -896,6 +895,19 @@ export function OpenAICodexSettings({ t }: OpenAICodexSettingsProps) {
         status: "error",
         message: error instanceof Error ? error.message : t("requestFailed"),
       });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelSignIn = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      await jsonRequest<{ ok: true }>(CANCEL_PATH, "POST");
+      setChallenge(undefined);
+      await refresh();
+    } catch (error: unknown) {
+      setStatus({ status: "error", message: error instanceof Error ? error.message : t("requestFailed") });
     } finally {
       setBusy(false);
     }
@@ -1105,22 +1117,46 @@ export function OpenAICodexSettings({ t }: OpenAICodexSettingsProps) {
               {busy ? t("working") : t("logout")}
             </button>
           ) : (
-            <button
-              type="button"
-              style={primaryButtonStyle}
-              disabled={busy}
-              onClick={() => {
-                void signIn();
-              }}>
-              {busy
-                ? t("working")
-                : status.status === "error" ||
-                    status.status === "reauth-required"
-                  ? t("loginAgain")
-                  : t("login")}
-            </button>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button
+                type="button"
+                style={primaryButtonStyle}
+                disabled={busy || (status.status === "signing-in" && challenge?.method === "device_code")}
+                onClick={() => { void signIn("browser"); }}>
+                {busy ? t("working") : t("loginBrowser")}
+              </button>
+              <button
+                type="button"
+                style={buttonStyle}
+                disabled={busy || (status.status === "signing-in" && challenge?.method === "browser")}
+                onClick={() => { void signIn("device_code"); }}>
+                {t("loginDeviceCode")}
+              </button>
+              {status.status === "signing-in" ? (
+                <button type="button" style={buttonStyle} disabled={busy}
+                  onClick={() => { void cancelSignIn(); }}>
+                  {t("cancelLogin")}
+                </button>
+              ) : null}
+            </div>
           )}
         </div>
+        {status.status === "signing-in" && challenge?.method === "browser" ? (
+          <p style={bodyStyle}>
+            <a href={challenge.url} target="_blank" rel="noopener noreferrer">
+              {t("openAuthorizationPage")}
+            </a>{" "}{t("browserLoginHint")}
+          </p>
+        ) : null}
+        {status.status === "signing-in" && challenge?.method === "device_code" ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <p style={bodyStyle}>{t("deviceCodeInstructions")}</p>
+            <a href={challenge.verificationUri} target="_blank" rel="noopener noreferrer">
+              {challenge.verificationUri}
+            </a>
+            <code style={commandStyle}>{challenge.userCode}</code>
+          </div>
+        ) : null}
         {status.status === "error" || status.status === "reauth-required" ? (
           <p style={errorStyle}>{status.message}</p>
         ) : null}

@@ -33,7 +33,7 @@ dsh web
 
 从 DeepSeek Harness 源码 checkout 运行时，使用 `pnpm dsh plugin --profile web add dsh-codex`。开发插件时仍可用 `link:/absolute/path/to/dsh-codex` 安装本地 checkout。
 
-打开 **设置 → OpenAI Codex → 使用 ChatGPT 登录**。插件会打开 OpenAI 授权页面，并通过 localhost 回调完成登录。账号页面会显示实时 Codex 额度进度条与精确剩余百分比；只有账号接口提供信用余额或工作区限额时，才会一并显示精确数值。
+打开 **设置 → OpenAI Codex**，选择 **浏览器登录** 或 **设备码登录**。浏览器登录会给出授权链接；点击后在系统浏览器完成授权。当浏览器和 dsh 宿主位于同一台机器时，localhost 回调会完成登录；远端浏览器可以使用设备码。账号页面会显示实时 Codex 额度进度条与精确剩余百分比；只有账号接口提供信用余额或工作区限额时，才会一并显示精确数值。
 
 回环地址上的 Web 页面会自动受信任。若 dsh 运行在另一台机器上，账号页面会显示需要在 dsh 主机执行的精确 origin 授权命令，例如 `dsh plugin --profile web exec dsh-codex trust-origin http://host:port`。allowlist 按完整 origin 匹配，与 OAuth 凭据分开保存，并可通过 `trusted-origins` 和 `untrust-origin` 查看或撤销。
 
@@ -53,7 +53,7 @@ dsh plugin --profile web exec dsh-codex logout
 dsh plugin --profile dsh-tui add dsh-codex
 ```
 
-重新启动 TUI 后，`/model` 会列出 `openai-codex` 的模型；没有显式模型配置或已保存选择时，TUI 会采用 bundle 注册的 `gpt-5.6-sol`。`/codex status|login|logout|usage|config` 用于管理账号与查看配置；`/codex set backend-fallback on|off` 控制自动模型恢复，其余开关可通过 `/codex set` 查看。浏览器登录完成后，凭据与 Web profile 共用同一份 dsh 凭据文件。
+重新启动 TUI 后，`/model` 会列出 `openai-codex` 的模型；没有显式模型配置或已保存选择时，TUI 会采用 bundle 注册的 `gpt-5.6-sol`。`/codex status|login|logout|usage|config` 用于管理账号与查看配置；`/codex set backend-fallback on|off` 控制自动模型恢复，其余开关可通过 `/codex set` 查看。`/codex login` 会给出浏览器链接，远端终端可用 `/codex login device` 获取设备码。TUI 的 `/settings` 也通过同一个 dsh 设置命名空间编辑 Codex 的标量设置；模型可见性与代理 URL 仍在 Web 设置页编辑。两个界面共用凭据和实时偏好。
 
 Codex、Claude Code 及其他自动化 agent 应直接遵循 [INSTALL.md](INSTALL.md)。它是一份完整且可重复执行的 runbook，不要求安装者阅读源码或设计文档。
 
@@ -102,7 +102,7 @@ bundle 会为新建 agent 选择 `openai-codex` / `gpt-5.6-sol`，并选择 Code
 打开 **设置 → OpenAI Codex → 网络代理**，可以选择三种范围：
 
 - **跟随 dsh** 不由插件覆盖网络设置；Codex 继承 dsh 启动时已经配置的进程级代理。
-- **仅 Codex** 把所选代理注入 Codex 模型 SSE 请求、原生压缩、独立搜索、生图、额度读取与 OAuth Token 刷新；pi-ai 的首次登录交换和 WebSocket 仍遵循进程策略。
+- **仅 Codex** 把所选代理用于 Codex 模型 SSE 请求、原生压缩、独立搜索、生图、额度读取，以及从设置页或 TUI 发起的 OAuth 登录和刷新；WebSocket 与独立 CLI 登录仍遵循进程策略。
 - **整个 dsh** 把代理应用到整个进程，并覆盖 OAuth；其他插件的请求也会受影响。关闭后会恢复插件覆盖前的宿主策略。
 
 代理 URL 支持 `http://` 与 `https://`。留空时依次使用 `DSH_CODEX_PROXY`，以及标准的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY` 与 `NO_PROXY` 环境变量。默认模式是 **跟随 dsh**，因此安装插件不会静默改变整个进程的 dispatcher。
@@ -177,7 +177,7 @@ dsh 登录默认与 Codex CLI／Desktop 相互独立：
 
 ## 兼容性说明
 
-- 0.3.1 面向成套发布的 DSH `0.1.7-rc.2` 插件表层，并使用其正式的 volatile settings 与 `dsh-http-proxy` 实现。同时使用 `@earendil-works/pi-ai` `0.85.1`；adapter 仍会在读取历史时迁移旧版 pi-ai replay envelope，因此升级后已有 reasoning／tool 元数据可继续使用。
+- 当前源码面向成套发布的 DSH `0.2.0-rc.1` 插件表层，并使用其正式的 volatile settings 与 `dsh-http-proxy` 实现。同时使用 `@earendil-works/pi-ai` `0.85.1`；adapter 仍会在读取历史时迁移旧版 pi-ai replay envelope，因此升级后已有 reasoning／tool 元数据可继续使用。
 - 插件只使用已发布的 dsh 插件表层，不要求修改版 Harness checkout。单独安装时即可生成附件并保存本地输出。
 - ChatGPT 套餐资格、模型权限、配额及后端行为由 OpenAI 控制，可能发生变化。
 - Codex 端点不执行普通 Responses 的 `max_output_tokens` 字段。压缩可以工作，但该路由无法在服务端落实配置的摘要上限。

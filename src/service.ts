@@ -41,6 +41,7 @@ export interface OpenAICodexServiceOptions
     ModelFallbackPreferences,
     ProxyPreferences {
   credentialFile?: string;
+  settingsNamespace?: string;
   models?: string[];
   modelCatalog: readonly ModelCatalogEntry[] | (() => readonly ModelCatalogEntry[]);
 }
@@ -50,6 +51,7 @@ export interface OpenAICodexServiceOptions
  * Credentials and live policy stay singletons even when several front doors are mounted.
  */
 export class OpenAICodexService {
+  readonly settingsNamespace: string;
   readonly credentials: OpenAICodexCredentialStore;
   readonly policy: ImageToolPolicy;
   readonly proxy: OpenAICodexProxyTransport;
@@ -60,6 +62,7 @@ export class OpenAICodexService {
   private lastUsage: OpenAICodexUsage | undefined;
 
   constructor(options: OpenAICodexServiceOptions) {
+    this.settingsNamespace = options.settingsNamespace ?? "llm-openai-codex";
     this.credentials = new OpenAICodexCredentialStore(options.credentialFile);
     // Only preferences belong in the settings composition base: `modelCatalog`
     // is a live thunk and `credentialFile` is not a preference, and either one
@@ -67,6 +70,7 @@ export class OpenAICodexService {
     const {
       modelCatalog,
       credentialFile: _credentialFile,
+      settingsNamespace: _settingsNamespace,
       ...preferences
     } = options;
     this.policy = new ImageToolPolicy(preferences, modelCatalog);

@@ -267,6 +267,9 @@ function liveValue<T>(value: T | undefined, fallback: T): T {
 
 export function apply(ctx: Context, config: Config): void {
   installOpenAICodexSearchEvent();
+  const settingsNamespace = (ctx.fiber as unknown as {
+    entry?: { options?: { id?: string } };
+  }).entry?.options?.id ?? name;
   const modelProvider = createOpenAICodexModelProvider((input, init) => service.proxy.fetch(input, init));
   const livePreferences = () => ({
     models: [...liveValue(config.models, openAICodexModelCatalog(modelProvider).map((model) => model.id))],
@@ -283,6 +286,7 @@ export function apply(ctx: Context, config: Config): void {
   });
   const service = new OpenAICodexService({
     ...(config.credentialFile === undefined ? {} : { credentialFile: config.credentialFile }),
+    settingsNamespace,
     modelCatalog: () => openAICodexModelCatalog(modelProvider),
     ...livePreferences(),
   });
@@ -300,10 +304,7 @@ export function apply(ctx: Context, config: Config): void {
     "dsh-openai-codex: proxy transport"
   );
   ctx.inject(["settings"], (settingsCtx) => {
-    const namespace = (ctx.fiber as unknown as {
-      entry?: { options?: { id?: string } };
-    }).entry?.options?.id ?? name;
-    service.attachSettings(settingsCtx, namespace, ctx.fiber);
+    service.attachSettings(settingsCtx, settingsNamespace, ctx.fiber);
   });
   ctx.on("loader/volatile-update", () => {
     service.refreshSettings(livePreferences());

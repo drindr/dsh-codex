@@ -33,7 +33,7 @@ dsh web
 
 From a DeepSeek Harness source checkout, use `pnpm dsh plugin --profile web add dsh-codex`. A local plugin checkout can still be installed with `link:/absolute/path/to/dsh-codex` for development.
 
-Open **Settings → OpenAI Codex → Sign in with ChatGPT**. The plugin opens OpenAI's authorization page and completes the localhost callback. The account page shows live Codex quota bars and exact remaining percentages; exact credit balances or workspace limits appear only when the account API supplies them.
+Open **Settings → OpenAI Codex** and choose **Browser sign-in** or **Device code**. Browser sign-in shows an authorization link; click it to open the system browser, which returns to the dsh host's localhost callback when both run on the same machine. Device code works when the browser is on another machine. The account page shows live Codex quota bars and exact remaining percentages; exact credit balances or workspace limits appear only when the account API supplies them.
 
 Loopback Web pages are trusted automatically. If dsh runs on another machine, the account page shows the exact origin command that must be approved on the dsh host, for example `dsh plugin --profile web exec dsh-codex trust-origin http://host:port`. The allowlist is exact-origin, stored separately from OAuth credentials, and can be inspected or revoked with `trusted-origins` and `untrust-origin`.
 
@@ -53,7 +53,7 @@ For `dsh-tui`, install the bundle into the same profile:
 dsh plugin --profile dsh-tui add dsh-codex
 ```
 
-After restarting the TUI, `/model` lists the `openai-codex` catalog. With no explicit route or saved selection, the TUI adopts the bundle's `gpt-5.6-sol` default. Use `/codex status|login|logout|usage|config` for the account and live settings; `/codex set backend-fallback on|off` controls automatic model recovery, while the remaining switches are listed by `/codex set`. Browser login shares the same dsh credential file used by the Web profile.
+After restarting the TUI, `/model` lists the `openai-codex` catalog. With no explicit route or saved selection, the TUI adopts the bundle's `gpt-5.6-sol` default. Use `/codex status|login|logout|usage|config` for the account and live settings; `/codex set backend-fallback on|off` controls automatic model recovery, while the remaining switches are listed by `/codex set`. `/codex login` shows a browser URL, and `/codex login device` shows a device code for remote terminals. The TUI's `/settings` also exposes Codex's scalar controls through the same dsh settings namespace. Model visibility and the proxy URL remain editable in Web Settings. Both front doors share credentials and live preferences.
 
 Codex, Claude Code, and other automation agents should follow [INSTALL.md](INSTALL.md). It is a complete, idempotent runbook and does not require reading this repository's source or design notes.
 
@@ -102,7 +102,7 @@ This mirrors Codex CLI's `model_context_window` concept on the Harness side; no 
 Open **Settings → OpenAI Codex → Network proxy** to select one of three scopes:
 
 - **Follow dsh** leaves networking untouched. Codex inherits any process-wide proxy configured when dsh started.
-- **Codex only** injects the selected proxy into Codex model SSE requests, native compaction, standalone search, image generation, quota reads, and OAuth token refresh. pi-ai's initial login exchange and WebSocket transport still follow the process policy.
+- **Codex only** applies the selected proxy to Codex model SSE requests, native compaction, standalone search, image generation, quota reads, and OAuth login and refresh started from Settings or TUI. WebSocket transport and standalone CLI login follow the process policy.
 - **All dsh** applies the proxy process-wide, including OAuth; requests from other plugins are affected too. Turning it off restores the policy that was active before this plugin overrode it.
 
 The URL accepts `http://` and `https://` proxies. Leave it blank to use `DSH_CODEX_PROXY`, then the standard `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` environment variables. The default mode is **Follow dsh**, so installing the plugin never silently changes the process dispatcher.
@@ -177,7 +177,7 @@ Explicit shared files use in-process serialization, with no `.lock` or refresh-i
 
 ## Compatibility notes
 
-- Version 0.3.1 targets the coherent DSH `0.1.7-rc.2` plugin surfaces and uses its official volatile settings and `dsh-http-proxy` implementations. It uses `@earendil-works/pi-ai` `0.85.1` and still migrates earlier pi-ai replay envelopes while reading history so existing reasoning/tool metadata remains usable after upgrades.
+- Current source targets the DSH `0.2.0-rc.1` plugin surfaces and uses its official volatile settings and `dsh-http-proxy` implementations. It uses `@earendil-works/pi-ai` `0.85.1` and still migrates earlier pi-ai replay envelopes while reading history so existing reasoning/tool metadata remains usable after upgrades.
 - The plugin runs on released dsh plugin surfaces and does not require a modified Harness checkout. It can generate attachments and save local output when installed alone.
 - ChatGPT plan eligibility, model access, quotas, and backend behavior are controlled by OpenAI and may change.
 - The Codex endpoint does not enforce the ordinary Responses `max_output_tokens` field. Compaction works, but its configured summary cap cannot be imposed server-side on this route.

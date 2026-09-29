@@ -50,6 +50,7 @@ describe("OpenAI Codex settings model catalog", () => {
     };
     let fastModeDefault = false;
     let automaticModelFallback = false;
+    let authStatus = "signed-out";
     let proxy = { proxyMode: "off", proxyUrl: "" };
     const fetchMock = vi.fn(
       async (
@@ -58,7 +59,18 @@ describe("OpenAI Codex settings model catalog", () => {
       ): Promise<Response> => {
         const path = String(input);
         if (path.endsWith("/auth/status"))
-          return json({ status: "signed-out" });
+          return json({ status: authStatus });
+        if (path.endsWith("/auth/login")) {
+          authStatus = "signing-in";
+          const method = (JSON.parse(String(init?.body)) as { method: string }).method;
+          return json(method === "device_code"
+            ? { method, verificationUri: "https://auth.openai.com/codex/device", userCode: "ABCD-EFGH" }
+            : { method, url: "https://auth.openai.com/oauth/authorize" });
+        }
+        if (path.endsWith("/auth/cancel")) {
+          authStatus = "signed-out";
+          return json({ ok: true });
+        }
         if (path.endsWith("/image-tools")) {
           if (init?.method === "POST") {
             imageTools = {
@@ -269,5 +281,18 @@ describe("OpenAI Codex settings model catalog", () => {
     fireEvent.click(screen.getByRole("button", { name: en.contextWindowSave }));
     expect(await screen.findByText(en.contextWindowInvalid)).toBeDefined();
     expect(contextPosts()).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: en.loginBrowser }));
+    const authorization = await screen.findByRole<HTMLAnchorElement>("link", { name: en.openAuthorizationPage });
+    expect(authorization.href).toBe("https://auth.openai.com/oauth/authorize");
+    expect(fetchMock.mock.calls.find(([input, init]) =>
+      String(input).endsWith("/auth/login") && init?.method === "POST" &&
+      JSON.parse(String(init.body)).method === "browser")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: en.cancelLogin }));
+    await waitFor(() => { expect(authStatus).toBe("signed-out"); });
+    fireEvent.click(screen.getByRole("button", { name: en.loginDeviceCode }));
+    expect(await screen.findByText("ABCD-EFGH")).toBeDefined();
+    expect(screen.getByRole<HTMLAnchorElement>("link", { name: "https://auth.openai.com/codex/device" }).href)
+      .toBe("https://auth.openai.com/codex/device");
   });
 });

@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { get } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createModels } from '@earendil-works/pi-ai'
 import type { AuthInteraction } from '@earendil-works/pi-ai'
@@ -23,6 +24,12 @@ const jwt = (email?: string) => `header.${Buffer.from(JSON.stringify({
 })).toString('base64url')}.signature`
 const old = { type: 'oauth' as const, access: jwt(), refresh: 'old-refresh', expires: 1, accountId: 'account' }
 const response = () => ({ access_token: jwt(), refresh_token: 'new-refresh', id_token: jwt('new@example.invalid'), expires_in: 3600 })
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
 let directory: string | undefined
 afterEach(async () => {
   if (directory) await rm(directory, { recursive: true, force: true })
@@ -62,11 +69,77 @@ describe('complete Codex OAuth refresh', () => {
     login.mockResolvedValue(old)
     const data = response()
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(Response.json(data))
-    const interaction = { signal: new AbortController().signal } as AuthInteraction & { signal: AbortSignal }
-    const credential = await openaiCodexProvider(fetch).auth.oauth!.login(interaction)
-    expect(login).toHaveBeenCalledWith(interaction)
+    vi.stubGlobal('fetch', fetch)
+    const interaction = { signal: new AbortController().signal, prompt: vi.fn(async () => 'browser'), notify: vi.fn() } as AuthInteraction & { signal: AbortSignal }
+    const credential = await openaiCodexProvider().auth.oauth!.login(interaction)
+    expect(login).toHaveBeenCalledOnce()
     expect(credential).toMatchObject({ refresh: data.refresh_token, idToken: data.id_token })
     expect(fetch).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+  })
+
+  it('routes the entire device-code exchange through the supplied Codex fetch', async () => {
+    const data = response()
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/deviceauth/usercode'))
+        return Response.json({ device_auth_id: 'device-id', user_code: 'ABCD-EFGH', interval: 0 })
+      if (url.endsWith('/deviceauth/token'))
+        return Response.json({ authorization_code: 'approval', code_verifier: 'verifier' })
+      if (url.endsWith('/oauth/token')) {
+        const grant = new URLSearchParams(init?.body as URLSearchParams).get('grant_type')
+        return Response.json(grant === 'authorization_code'
+          ? { access_token: jwt(), refresh_token: 'first-refresh', expires_in: 3600 }
+          : data)
+      }
+      throw new Error(`unexpected OAuth URL: ${url}`)
+    })
+    const notify = vi.fn()
+    const interaction = { signal: new AbortController().signal, prompt: vi.fn(async () => 'device_code'), notify }
+    const credential = await openaiCodexProvider(fetch).auth.oauth!.login(interaction)
+    expect(notify).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'device_code', userCode: 'ABCD-EFGH', verificationUri: 'https://auth.openai.com/codex/device',
+    }))
+    expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://auth.openai.com/api/accounts/deviceauth/usercode',
+      'https://auth.openai.com/api/accounts/deviceauth/token',
+      'https://auth.openai.com/oauth/token',
+      'https://auth.openai.com/oauth/token',
+    ])
+    expect(credential).toMatchObject({ idToken: data.id_token, refresh: data.refresh_token })
+    expect(login).not.toHaveBeenCalled()
+  })
+
+  it('lets a local browser callback finish while token exchange uses Codex fetch', async () => {
+    const data = response()
+    const fetch = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const grant = new URLSearchParams(init?.body as URLSearchParams).get('grant_type')
+      return Response.json(grant === 'authorization_code'
+        ? { access_token: jwt(), refresh_token: 'first-refresh', expires_in: 3600 }
+        : data)
+    })
+    const callback = deferred<void>()
+    const interaction = {
+      signal: new AbortController().signal,
+      prompt: (prompt: { type: string; signal?: AbortSignal }) => prompt.type === 'select'
+        ? Promise.resolve('browser')
+        : new Promise<string>((_resolve, reject) => {
+            prompt.signal?.addEventListener('abort', () => reject(new Error('manual prompt closed')), { once: true })
+          }),
+      notify: (event: { type: string; url?: string }) => {
+        if (event.type !== 'auth_url' || event.url === undefined) return
+        const state = new URL(event.url).searchParams.get('state')
+        get(`http://127.0.0.1:1455/auth/callback?code=approval&state=${state}`, res => {
+          res.resume()
+          res.on('end', () => callback.resolve())
+        }).on('error', callback.reject)
+      },
+    }
+    const credential = await openaiCodexProvider(fetch).auth.oauth!.login(interaction)
+    await callback.promise
+    expect(credential).toMatchObject({ idToken: data.id_token })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(new URLSearchParams(fetch.mock.calls[0]?.[1]?.body as URLSearchParams).get('grant_type')).toBe('authorization_code')
   })
 
   it('rejects missing ID tokens and hides failed response bodies', async () => {
