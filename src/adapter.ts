@@ -3,7 +3,7 @@
 import { createModels } from "@earendil-works/pi-ai";
 import type {
   AuthContext,
-  Context as PiContext,
+  TranscriptContext as PiContext,
   FetchFunction,
   MutableModels,
   Provider,

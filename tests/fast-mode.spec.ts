@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AssistantMessageEventStream, Context as PiContext, Model, Provider, SimpleStreamOptions } from '@earendil-works/pi-ai'
+import type { AssistantMessageEventStream, TranscriptContext as PiContext, Model, Provider, SimpleStreamOptions } from '@earendil-works/pi-ai'
 import { OPENAI_CODEX_LUNA_RESERVE_MODEL, withOpenAICodexFastMode } from '../src/adapter.ts'
 import {
   FastModeRegistry,

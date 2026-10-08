@@ -7,7 +7,7 @@ import type {
   AssistantMessage,
   AssistantMessageEventStream,
   Api,
-  Context as PiContext,
+  TranscriptContext as PiContext,
   FetchFunction,
   Model,
   Provider,
@@ -18,6 +18,10 @@ import {
   convertResponsesMessages,
   convertResponsesTools,
 } from '@earendil-works/pi-ai/api/openai-responses-shared'
+import {
+  getCurrentSystemPrompt,
+  getCurrentTools,
+} from '@earendil-works/pi-ai/utils/transcript'
 import type { ResponseApiPreferences } from './tool-policy.ts'
 
 /** Responses endpoint used by the official Codex client, including V2 compaction. */
@@ -425,9 +429,12 @@ export class OpenAICodexResponseRuntime {
     const compat = model.compat as { supportsStrictMode?: boolean; supportsOpenAIGrammarTools?: boolean } | undefined
     const supportsStrictMode = compat?.supportsStrictMode ?? true
     const supportsOpenAIGrammarTools = compat?.supportsOpenAIGrammarTools ?? false
-    const tools = context.tools === undefined || context.tools.length === 0
+    // pi-ai 0.87 carries prompt and tool declarations in transcript system
+    // messages; resolve the current set before building the request field.
+    const currentTools = getCurrentTools(context.messages)
+    const tools = currentTools.length === 0
       ? undefined
-      : convertResponsesTools(context.tools, {
+      : convertResponsesTools(currentTools, {
           strict: null,
           supportsStrictMode,
           supportsOpenAIGrammarTools,
@@ -441,7 +448,7 @@ export class OpenAICodexResponseRuntime {
       store: false,
       stream: true,
       input: [...input, { type: 'compaction_trigger' }],
-      instructions: context.systemPrompt ?? '',
+      instructions: getCurrentSystemPrompt(context.messages),
       ...tools === undefined ? {} : { tools },
       tool_choice: 'auto',
       parallel_tool_calls: true,
