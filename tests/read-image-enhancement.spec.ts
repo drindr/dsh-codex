@@ -232,7 +232,9 @@ describe('read_image enhancement', () => {
   it('refuses a URL result for a model without declared image input', async () => {
     const context = await setup()
 
-    const result = await readImage(context, { url: 'https://images.example/pixel' }, 'gpt-5.3-codex-spark')
+    const modelInfo = await context.llm.resolveModelInfo(OpenAICodex.OPENAI_CODEX_PROVIDER, 'gpt-6-luna')
+    vi.spyOn(context.llm, 'resolveModelInfo').mockResolvedValue({ ...modelInfo, inputModalities: ['text'] })
+    const result = await readImage(context, { url: 'https://images.example/pixel' }, 'text-only-fixture')
 
     expect(result.isError).toBe(true)
     expect(result.content.find(block => block.type === 'text')?.text).toContain('does not declare image input')

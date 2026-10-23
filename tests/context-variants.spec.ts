@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream, normalizeContext } from '@earendil-works/pi-ai'
 import type { SimpleStreamOptions } from '@earendil-works/pi-ai'
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
 import { createOpenAICodexAdapter } from '../src/adapter.ts'
@@ -49,7 +49,7 @@ describe('Codex context window variants (local patch)', () => {
     const catalogModel = base.getModels().find(candidate => candidate.id === OPENAI_CODEX_SOL_1M_WIRE_MODEL)
     if (catalogModel === undefined) throw new Error('Codex provider has no test model')
     const variant = { ...catalogModel, id: OPENAI_CODEX_SOL_1M_MODEL }
-    wrapped.streamSimple(variant, { messages: [] }, {})
+    wrapped.streamSimple(variant, normalizeContext({ messages: [] }), {})
     const transformed = await captured?.onPayload?.(
       { model: variant.id, store: false, input: [] },
       variant,

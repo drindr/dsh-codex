@@ -4,7 +4,7 @@
  * @module dsh-codex
  */
 
-import type { Context } from "@deepseek-ai/cordis";
+import type { Context, Volatile } from "@deepseek-ai/cordis";
 import { randomUUID } from "node:crypto";
 import z from "@deepseek-ai/schemastery";
 import type {} from "@deepseek-ai/dsh-attachment";
@@ -142,11 +142,11 @@ export const inject = ["llm", "web"];
 /** Composite model and standalone-search configuration. */
 export interface Config {
   /** Model ids advertised by the provider; omitted to advertise the full catalog. */
-  models?: string[] | undefined;
+  models: Volatile<string[] | undefined>;
   /** Client-side model context capacity in tokens; omitted to keep provider defaults. */
-  contextWindow?: number | undefined;
+  contextWindow: Volatile<number | null | undefined>;
   /** Apply the context-window override to GPT-5.3 Codex Spark as well. */
-  overrideSparkContextWindow?: boolean;
+  overrideSparkContextWindow: Volatile<boolean>;
   /** Model used for auxiliary standalone searches. */
   searchModel?: string;
   /** Cached, indexed, or live web access. */
@@ -156,22 +156,25 @@ export interface Config {
   /** Maximum generated tokens returned by the standalone search endpoint. */
   searchMaxOutputTokens?: number;
   /** Extend Harness read_image with HTTP(S) URL input. */
-  modifyReadImage?: boolean;
+  modifyReadImage: Volatile<boolean>;
   /** Allow non-Codex vision models to call imagegen. */
-  shareImagegenWithOtherModels?: boolean;
+  shareImagegenWithOtherModels: Volatile<boolean>;
   /** Reuse matching Codex context through the session's WebSocket connection. */
-  useWebSocketContextReuse?: boolean;
+  useWebSocketContextReuse: Volatile<boolean>;
+  /** Retired preference retained to migrate existing profiles. */
+  useStatefulResponses: Volatile<boolean>;
   /** Use Codex V2 Responses compaction for Harness compaction calls. */
-  useNativeCompaction?: boolean;
+  useNativeCompaction: Volatile<boolean>;
 }
 
-export const Config: z<Config> = z.object({
-  models: z.union([z.const(undefined), z.array(z.string())]),
+export const Config = z.object({
+  models: z.union([z.const(undefined), z.array(z.string())]).volatile(),
   contextWindow: z.union([
     z.const(undefined),
+    z.const(null),
     z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER),
-  ]),
-  overrideSparkContextWindow: z.boolean().default(false),
+  ]).volatile(),
+  overrideSparkContextWindow: z.boolean().default(false).volatile(),
   searchModel: z.string().default(DEFAULT_OPENAI_CODEX_SEARCH_MODEL),
   searchMode: z
     .union(["cached", "indexed", "live"] as const)
@@ -184,10 +187,11 @@ export const Config: z<Config> = z.object({
     .step(1)
     .min(1)
     .default(DEFAULT_OPENAI_CODEX_SEARCH_MAX_OUTPUT_TOKENS),
-  modifyReadImage: z.boolean().default(true),
-  shareImagegenWithOtherModels: z.boolean().default(true),
-  useWebSocketContextReuse: z.boolean().default(false),
-  useNativeCompaction: z.boolean().default(false),
+  modifyReadImage: z.boolean().default(true).volatile(),
+  shareImagegenWithOtherModels: z.boolean().default(true).volatile(),
+  useWebSocketContextReuse: z.boolean().default(false).volatile(),
+  useStatefulResponses: z.boolean().default(false).volatile(),
+  useNativeCompaction: z.boolean().default(false).volatile(),
 });
 
 /**
@@ -198,16 +202,18 @@ export const Config: z<Config> = z.object({
  */
 export function apply(ctx: Context, config: Config): void {
   installOpenAICodexSearchEvent();
-  const service = new OpenAICodexService({
-    ...(config.models === undefined ? {} : { models: config.models }),
-    contextWindow: config.contextWindow ?? null,
-    overrideSparkContextWindow: config.overrideSparkContextWindow ?? false,
-    modelCatalog: openAICodexModelCatalog(),
-    modifyReadImage: config.modifyReadImage ?? true,
-    shareImagegenWithOtherModels: config.shareImagegenWithOtherModels ?? true,
-    useWebSocketContextReuse: config.useWebSocketContextReuse ?? false,
-    useNativeCompaction: config.useNativeCompaction ?? false,
+  const modelCatalog = openAICodexModelCatalog();
+  const preferences = () => ({
+    models: [...(config.models.get() ?? modelCatalog.map((model) => model.id))],
+    contextWindow: config.contextWindow.get() ?? null,
+    overrideSparkContextWindow: config.overrideSparkContextWindow.get(),
+    modifyReadImage: config.modifyReadImage.get(),
+    shareImagegenWithOtherModels: config.shareImagegenWithOtherModels.get(),
+    useWebSocketContextReuse: config.useWebSocketContextReuse.get(),
+    useStatefulResponses: config.useStatefulResponses.get(),
+    useNativeCompaction: config.useNativeCompaction.get(),
   });
+  const service = new OpenAICodexService({ ...preferences(), modelCatalog });
   const credentials = service.credentials;
   const imageTools = service.policy;
   const fastMode = new FastModeRegistry();
@@ -216,9 +222,13 @@ export function apply(ctx: Context, config: Config): void {
   );
   ctx.provide("openAICodex", service);
   ctx.inject(["settings"], (settingsCtx) => {
-    service.attachSettings(settingsCtx);
+    service.attachSettings(settingsCtx, {
+      namespace: ctx.fiber.entry?.options.id ?? "llm-openai-codex",
+      owner: ctx.fiber,
+      read: preferences,
+    });
   });
-  ctx.llm.registerAdapter(
+  const registration = ctx.llm.registerAdapter(
     [OPENAI_CODEX_PROVIDER],
     createOpenAICodexAdapter(
       credentials,
@@ -230,6 +240,12 @@ export function apply(ctx: Context, config: Config): void {
       () => imageTools.contextWindowSnapshot().overrideSparkContextWindow
     )
   );
+  // Loader commits all volatile references before publishing this event.
+  // Refresh the provider policy before notifying model-directory observers.
+  ctx.on("loader/volatile-update", () => {
+    imageTools.applyPreferences(preferences());
+    registration.replace([OPENAI_CODEX_PROVIDER]);
+  });
   ctx.web.registerSearchProvider(
     new OpenAICodexSearchProvider({
       credentials,

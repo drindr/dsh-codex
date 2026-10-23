@@ -59,6 +59,8 @@ The bundle selects `openai-codex` / `gpt-5.6-sol` for new agents and selects the
 
 ## Model catalog
 
+The pi-ai `1.4.0` catalog includes `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, and `gpt-6.1-sol`, with their provider-declared reasoning and input capabilities. The Codex catalog context windows are 272,000 tokens for the three GPT-6 entries and 500,000 for GPT-6.1 Sol. The local `gpt-5.6-sol-1m` alias remains available at 1,050,000 tokens and routes requests to `gpt-5.6-sol`. The default remains `gpt-5.6-sol`; upgrading does not replace an existing selection.
+
 By default, the model picker advertises the complete `openai-codex` catalog. Open **Settings → OpenAI Codex** and use the model checkboxes to choose which entries remain visible. The selection is live and durable; dsh refreshes the Web and TUI model directories after it changes.
 
 The same initial subset can be seeded through `models` on the `llm-openai-codex` entry while preserving provider order:
@@ -150,7 +152,7 @@ Keeping the stores separate prevents two clients from racing the same rotating r
 
 ## Compatibility notes
 
-- This branch builds against DSH `0.1.2-rc.1` plugin surfaces and retains the `0.1.1-rc.2` compatibility baseline. The current build uses `@earendil-works/pi-ai` `0.85.1`; diagnostics explicitly accept `0.84.4` and `0.85.1`, not every version allowed by the broader package dependency range. The adapter migrates earlier pi-ai replay envelopes while reading history so existing reasoning/tool metadata remains usable after upgrades.
+- This branch builds and is tested against DSH `0.2.1-rc.2` and `@earendil-works/pi-ai` `1.4.0`. It uses the current settings, session plugin-record, and browser tool-view APIs; the former `dsh-invariants` package is no longer required. Compatibility diagnostics accept pi-ai `1.4.0`; the earlier DSH 0.1 and pi-ai 0.8x baseline is no longer supported. The adapter still migrates earlier pi-ai replay envelopes while reading history.
 - The plugin runs on released dsh plugin surfaces and does not require a modified Harness checkout. It can generate attachments and save local output when installed alone.
 - ChatGPT plan eligibility, model access, quotas, and backend behavior are controlled by OpenAI and may change.
 - The Codex endpoint does not enforce the ordinary Responses `max_output_tokens` field. Compaction works, but its configured summary cap cannot be imposed server-side on this route.

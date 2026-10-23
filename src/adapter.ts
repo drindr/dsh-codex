@@ -3,15 +3,16 @@
 import { createModels } from "@earendil-works/pi-ai";
 import type {
   AuthContext,
-  Context as PiContext,
+  TranscriptContext as PiContext,
   MutableModels,
   Provider,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
-import { resolveRetryPolicy } from "@deepseek-ai/dsh-llm";
+import { LlmError, resolveRetryPolicy } from "@deepseek-ai/dsh-llm";
 import type {
   GenerateOptions,
+  LlmModelInfo,
   PreparedAdapterCall,
   StreamChunk,
 } from "@deepseek-ai/dsh-llm";
@@ -20,7 +21,7 @@ import type { ResolvedPiAiProviderProfile } from "@deepseek-ai/dsh-llm-pi-ai";
 import type {
   AttachmentStore,
   ImageAttachmentRef,
-  ImageRequestPolicy,
+  ImageRequestTarget,
 } from "@deepseek-ai/dsh-attachment";
 import type { OpenAICodexCredentialStore } from "./store.ts";
 import { OPENAI_CODEX_PROVIDER } from "./store.ts";
@@ -39,7 +40,7 @@ const GPT_5_3_CODEX_SPARK = "gpt-5.3-codex-spark";
 
 /**
  * The official GPT-5.6 Sol specification documents a 1,050,000-token context
- * window, while the Codex subscription catalog bundled with pi-ai caps every
+ * window, while the Codex subscription catalog bundled with pi-ai caps that
  * model at 272K. OpenAI accepts subscription-route requests beyond the catalog
  * value, so the route offers both: the catalog entry stays the default, and a
  * local `gpt-5.6-sol-1m` variant exposes the full window. The alias never
@@ -176,25 +177,25 @@ export function openAICodexRequestImagePixelBudget(
   return dimensions.width * dimensions.height;
 }
 
+function codexImageRequestTarget(target: ImageRequestTarget): ImageRequestTarget {
+  const pixels = openAICodexRequestImagePixelBudget(
+    target.width, target.height, target.width * target.height
+  );
+  return { ...target, ...projectedImageDimensions(target.width, target.height, pixels) };
+}
+
 function withOpenAICodexImagePolicy(store: AttachmentStore): AttachmentStore {
   return new Proxy(store, {
     get(target, property) {
       if (property === "readImageRequest") {
         return (
           ref: ImageAttachmentRef,
-          policy: ImageRequestPolicy,
+          policy: ImageRequestTarget,
           signal?: AbortSignal
         ) =>
           target.readImageRequest(
             ref,
-            {
-              ...policy,
-              maxPixels: openAICodexRequestImagePixelBudget(
-                ref.width,
-                ref.height,
-                policy.maxPixels
-              ),
-            },
+            codexImageRequestTarget(policy),
             signal
           );
       }
@@ -252,7 +253,7 @@ function migrateReplayHistory(options: GenerateOptions): GenerateOptions {
   let changed = false;
   const messages = options.messages.map((message) => {
     if (
-      message.source.kind !== "model" ||
+      message.role !== "assistant" ||
       message.source.replayState === undefined
     )
       return message;
@@ -368,16 +369,30 @@ function requestProvider(
 
 /** Preserve Harness call purpose until the generic pi-ai adapter reaches the provider. */
 class OpenAICodexAdapter extends PiAiAdapter {
+  private readonly catalogProfiles: ConstructorParameters<typeof PiAiAdapter>[0]["profiles"];
+
   constructor(
     options: ConstructorParameters<typeof PiAiAdapter>[0],
     private readonly responses: OpenAICodexResponseRuntime,
     private readonly visibleModelIds?: () => readonly string[]
   ) {
     super(options);
+    this.catalogProfiles = options.profiles;
   }
 
-  override async listModels(provider: string) {
-    const models = await super.listModels(provider);
+  override imageRequestTarget(provider: string, model: string, image: ImageAttachmentRef): ImageRequestTarget {
+    return codexImageRequestTarget(super.imageRequestTarget(provider, model, image));
+  }
+
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    // Catalog metadata is static and must remain available without refreshing OAuth.
+    // The generic adapter still resolves credentials immediately before streaming.
+    const profile = this.catalogProfiles().get(provider);
+    if (profile === undefined)
+      throw new LlmError(`Codex adapter does not own provider "${provider}"`, "NO_ADAPTER");
+    const models = (profile.piProvider?.getModels() ?? []).map((model) => ({
+      provider, id: model.id, name: model.name, inputModalities: [...model.input],
+    }));
     const visibleModelIds = this.visibleModelIds?.();
     if (visibleModelIds === undefined) return models;
     const visible = new Set(visibleModelIds);
@@ -473,6 +488,7 @@ export function createOpenAICodexAdapter(
       maxRequestImageBytes: OPENAI_CODEX_PROMPT_IMAGE_INPUT_GUARD_BYTES,
       requestImageMaxBytes: OPENAI_CODEX_PROMPT_IMAGE_INPUT_GUARD_BYTES,
       retryPolicy: OPENAI_CODEX_RETRY_POLICY,
+      modelErrors: new Map(),
       configuredMaxTokens: new Map(),
       piProvider: responses.wrap(configuredProvider),
     };

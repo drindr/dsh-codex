@@ -20,26 +20,21 @@ import { Config } from "../src/index.ts";
 
 describe("OpenAI Codex adapter policy", () => {
   it("validates optional catalog and context-window configuration", () => {
-    expect(Config({}).models).toBeUndefined();
-    expect(Config({}).contextWindow).toBeUndefined();
-    expect(Config({}).overrideSparkContextWindow).toBe(false);
-    expect(
-      Config({
-        models: [],
-        contextWindow: 512_000,
-        overrideSparkContextWindow: true,
-      })
-    ).toMatchObject({
-      models: [],
-      contextWindow: 512_000,
-      overrideSparkContextWindow: true,
+    expect(Config({}).models.get()).toBeUndefined();
+    expect(Config({}).contextWindow.get()).toBeUndefined();
+    expect(Config({}).overrideSparkContextWindow.get()).toBe(false);
+    const configured = Config({
+      models: [], contextWindow: 512_000, overrideSparkContextWindow: true,
     });
+    expect(configured.models.get()).toEqual([]);
+    expect(configured.contextWindow.get()).toBe(512_000);
+    expect(configured.overrideSparkContextWindow.get()).toBe(true);
     expect(() => Config({ contextWindow: 0 })).toThrow();
   });
 
   it("supplies the complete request-image policy required by current DSH runtimes", () => {
     const adapter = createOpenAICodexAdapter(
-      {} as OpenAICodexCredentialStore,
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
       () => undefined,
       () => ({ useWebSocketContextReuse: false, useNativeCompaction: false })
     );
@@ -112,7 +107,7 @@ describe("OpenAI Codex adapter policy", () => {
     const readImageRequest = vi.fn().mockResolvedValue({});
     const store = { readImageRequest } as unknown as AttachmentStore;
     const adapter = createOpenAICodexAdapter(
-      {} as OpenAICodexCredentialStore,
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
       () => store,
       () => ({ useWebSocketContextReuse: false, useNativeCompaction: false })
     );
@@ -124,23 +119,27 @@ describe("OpenAI Codex adapter policy", () => {
     const ref = { width: 8192, height: 512 } as ImageAttachmentRef;
 
     await resolved?.readImageRequest(ref, {
-      maxPixels: OPENAI_CODEX_REQUEST_IMAGE_PIXEL_BUDGET,
+      width: 8192, height: 512,
       maxBytes: OPENAI_CODEX_PROMPT_IMAGE_INPUT_GUARD_BYTES,
     });
 
     expect(readImageRequest).toHaveBeenCalledWith(
       ref,
       {
-        maxPixels: 2048 * 128,
+        width: 2048, height: 128,
         maxBytes: OPENAI_CODEX_PROMPT_IMAGE_INPUT_GUARD_BYTES,
       },
       undefined
     );
+    expect(adapter.imageRequestTarget(OPENAI_CODEX_PROVIDER, "gpt-6.1-sol", ref)).toEqual({
+      width: 2048, height: 128,
+      maxBytes: OPENAI_CODEX_PROMPT_IMAGE_INPUT_GUARD_BYTES,
+    });
   });
 
   it("registers the extended bounded retry policy on the provider route", () => {
     const adapter = createOpenAICodexAdapter(
-      {} as OpenAICodexCredentialStore,
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
       () => undefined,
       () => ({ useWebSocketContextReuse: false, useNativeCompaction: false })
     );
@@ -163,9 +162,23 @@ describe("OpenAI Codex adapter policy", () => {
     });
   });
 
+  it("lists and resolves static model metadata without accessing OAuth credentials", async () => {
+    const read = vi.fn().mockRejectedValue(new Error("catalog must not read OAuth credentials"));
+    const adapter = createOpenAICodexAdapter(
+      { read } as unknown as OpenAICodexCredentialStore,
+      () => undefined,
+      () => ({ useWebSocketContextReuse: false, useNativeCompaction: false })
+    );
+    expect((await adapter.listModels(OPENAI_CODEX_PROVIDER)).map((model) => model.id))
+      .toContain("gpt-6.1-sol");
+    await expect(adapter.resolveModel(OPENAI_CODEX_PROVIDER, "gpt-6.1-sol"))
+      .resolves.toMatchObject({ context: { contextWindow: 500_000 } });
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("advertises only configured models while keeping hidden models resolvable", async () => {
     const adapter = createOpenAICodexAdapter(
-      {} as OpenAICodexCredentialStore,
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
       () => undefined,
       () => ({ useWebSocketContextReuse: false, useNativeCompaction: false }),
       undefined,
@@ -179,10 +192,10 @@ describe("OpenAI Codex adapter policy", () => {
     ]);
 
     await expect(
-      adapter.resolveModel(OPENAI_CODEX_PROVIDER, "gpt-5.4")
+      adapter.resolveModel(OPENAI_CODEX_PROVIDER, "gpt-6.1-sol")
     ).resolves.toMatchObject({
       provider: OPENAI_CODEX_PROVIDER,
-      id: "gpt-5.4",
+      id: "gpt-6.1-sol",
     });
   });
 
@@ -190,7 +203,7 @@ describe("OpenAI Codex adapter policy", () => {
     let contextWindow: number | null = null;
     let overrideSparkContextWindow = false;
     const adapter = createOpenAICodexAdapter(
-      {} as OpenAICodexCredentialStore,
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
       () => undefined,
       () => ({ useWebSocketContextReuse: false, useNativeCompaction: false }),
       undefined,
@@ -245,17 +258,11 @@ describe("OpenAI Codex adapter policy", () => {
     ).resolves.toMatchObject({
       context: { contextWindow: 512_000 },
     });
-    await expect(
-      adapter.resolveModel(OPENAI_CODEX_PROVIDER, "gpt-5.3-codex-spark")
-    ).resolves.toMatchObject({
-      context: { contextWindow: 128_000 },
-    });
-
     overrideSparkContextWindow = true;
     const thirdProfiles = profileLoader();
     expect(thirdProfiles).not.toBe(secondProfiles);
     await expect(
-      adapter.resolveModel(OPENAI_CODEX_PROVIDER, "gpt-5.3-codex-spark")
+      adapter.resolveModel(OPENAI_CODEX_PROVIDER, "gpt-6.1-sol")
     ).resolves.toMatchObject({
       context: { contextWindow: 512_000 },
     });
@@ -269,9 +276,29 @@ describe("OpenAI Codex adapter policy", () => {
     });
   });
 
+  it.each([
+    ["gpt-6-astra", 272_000, false],
+    ["gpt-6-sol", 272_000, true],
+    ["gpt-6-luna", 272_000, true],
+    ["gpt-6.1-sol", 500_000, false],
+  ] as const)("preserves catalog capabilities for %s", async (id, capacity, supportsOff) => {
+    const adapter = createOpenAICodexAdapter(
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
+      () => undefined,
+      () => ({ useWebSocketContextReuse: false, useNativeCompaction: false })
+    );
+    const model = await adapter.resolveModel(OPENAI_CODEX_PROVIDER, id);
+    expect(model.context?.contextWindow).toBe(capacity);
+    expect(model.inputModalities).toEqual(["text", "image"]);
+    const efforts = model.reasoning?.efforts.map((effort) => effort.id);
+    expect(efforts).toEqual(expect.arrayContaining(["low", "medium", "high", "xhigh", "max"]));
+    expect(efforts?.includes("off" as never)).toBe(supportsOff);
+    expect(openAICodexModelCatalog().find((entry) => entry.id === id)?.contextWindow).toBe(capacity);
+  });
+
   it("advertises the full provider catalog when no model list is configured", async () => {
     const adapter = createOpenAICodexAdapter(
-      {} as OpenAICodexCredentialStore,
+      { read: async () => undefined } as unknown as OpenAICodexCredentialStore,
       () => undefined,
       () => ({ useWebSocketContextReuse: false, useNativeCompaction: false })
     );
@@ -279,7 +306,10 @@ describe("OpenAI Codex adapter policy", () => {
     const models = await adapter.listModels(OPENAI_CODEX_PROVIDER);
     expect(models.map((model) => model.id)).toEqual(
       expect.arrayContaining([
-        "gpt-5.4",
+        "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
+        "gpt-6.1-sol",
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",

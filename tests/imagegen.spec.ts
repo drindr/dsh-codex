@@ -54,7 +54,7 @@ afterEach(async () => {
 })
 
 async function setup(
-  config: OpenAICodex.Config = {},
+  config: Parameters<typeof OpenAICodex.Config>[0] = {},
   sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access',
 ): Promise<Context> {
   const ctx = new Context()
@@ -229,7 +229,9 @@ describe('imagegen', () => {
     const fetchMock = successfulFetch()
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await generate(ctx, { prompt: 'A tiny pixel' }, [], 'gpt-5.3-codex-spark')
+    const modelInfo = await ctx.llm.resolveModelInfo(OpenAICodex.OPENAI_CODEX_PROVIDER, 'gpt-6-luna')
+    vi.spyOn(ctx.llm, 'resolveModelInfo').mockResolvedValue({ ...modelInfo, inputModalities: ['text'] })
+    const result = await generate(ctx, { prompt: 'A tiny pixel' }, [], 'text-only-fixture')
 
     expect(result.isError).toBe(true)
     expect(result.content.find(block => block.type === 'text')?.text).toContain('does not declare image input')

@@ -1,28 +1,40 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Context } from "@deepseek-ai/cordis";
-import { SettingsProvider } from "@deepseek-ai/dsh-settings";
-import type { SettingsNamespace } from "@deepseek-ai/dsh-settings";
+import { Context, Service } from "@deepseek-ai/cordis";
+import type { SettingsDescriptor, SettingsNamespace } from "@deepseek-ai/dsh-settings";
 import { ImageToolPolicy } from "../src/tool-policy.ts";
 
-class MemorySettings extends SettingsProvider {
+class MemorySettings extends Service {
   readonly writable = true;
-  private stored: Record<string, unknown> = {};
+  private stored: Record<string, Record<string, unknown>> = {};
+  private revision = 0;
 
-  seed(stored: Record<string, unknown>): void {
+  constructor(private readonly ownerContext: Context) {
+    super(ownerContext, "settings");
+  }
+
+  configure(): () => void { return () => {}; }
+
+  describe(): SettingsDescriptor[] {
+    return Object.entries(this.stored).map(([ns, value]) => ({
+      ns: ns as SettingsNamespace,
+      autoGenerate: false,
+      schema: {},
+      value: structuredClone(value),
+      revision: this.revision,
+      applies: "live",
+    }));
+  }
+
+  seed(stored: Record<string, Record<string, unknown>>): void {
     this.stored = structuredClone(stored);
-    this.publish(this.stored);
+    for (const ns of Object.keys(stored)) {
+      this.ownerContext.emit("settings/document-updated", ns as SettingsNamespace, ++this.revision);
+    }
   }
 
-  protected load(): Promise<Record<string, unknown>> {
-    return Promise.resolve(structuredClone(this.stored));
-  }
-
-  protected async persist(
-    ns: SettingsNamespace,
-    section: Record<string, unknown>
-  ): Promise<void> {
-    this.stored = { ...this.stored, [String(ns)]: structuredClone(section) };
-    this.publish(this.stored);
+  async update(ns: string, patch: object): Promise<void> {
+    this.stored = { ...this.stored, [ns]: { ...this.stored[ns], ...structuredClone(patch) } };
+    this.ownerContext.emit("settings/document-updated", ns as SettingsNamespace, ++this.revision);
   }
 }
 
@@ -153,13 +165,52 @@ describe("ImageToolPolicy", () => {
     expect(policy.modelCatalogSnapshot().models).toEqual(["gpt-5.6-sol"]);
   });
 
+  it("follows external changes to its owning entry and ignores other entries", async () => {
+    const ctx = new Context();
+    context = ctx;
+    await ctx.plugin(MemorySettings);
+    const settings = ctx.settings as unknown as MemorySettings;
+    settings.seed({ customCodex: { useStatefulResponses: true } });
+    const policy = new ImageToolPolicy();
+    policy.attach(ctx, { namespace: "customCodex" });
+    expect(policy.responseApiSnapshot().useWebSocketContextReuse).toBe(true);
+
+    await policy.updateResponseApi({ useWebSocketContextReuse: false });
+    expect(policy.responseApiSnapshot().useWebSocketContextReuse).toBe(false);
+    expect(settings.describe().find((entry) => String(entry.ns) === "customCodex")?.value)
+      .toMatchObject({ useStatefulResponses: false, useWebSocketContextReuse: false });
+
+    await settings.update("unrelated", { modifyReadImage: false });
+    expect(policy.snapshot().modifyReadImage).toBe(true);
+    await settings.update("customCodex", { modifyReadImage: false });
+    expect(policy.snapshot().modifyReadImage).toBe(false);
+  });
+
+  it("restores catalog defaults when optional profile overrides are removed", async () => {
+    const ctx = new Context();
+    context = ctx;
+    await ctx.plugin(MemorySettings);
+    const settings = ctx.settings as unknown as MemorySettings;
+    const catalog = [
+      { id: "gpt-6-sol", name: "GPT-6 Sol", contextWindow: 272_000 },
+      { id: "gpt-6-luna", name: "GPT-6 Luna", contextWindow: 272_000 },
+    ];
+    settings.seed({ "llm-openai-codex": { models: ["gpt-6-sol"], contextWindow: 512_000 } });
+    const policy = new ImageToolPolicy({ models: ["gpt-6-sol"], contextWindow: 512_000 }, catalog);
+    policy.attach(ctx);
+    expect(policy.modelCatalogSnapshot().models).toEqual(["gpt-6-sol"]);
+    settings.seed({ "llm-openai-codex": {} });
+    expect(policy.modelCatalogSnapshot().models).toEqual(["gpt-6-sol", "gpt-6-luna"]);
+    expect(policy.contextWindowSnapshot().contextWindow).toBeNull();
+  });
+
   it("defaults an older partial settings document to the complete model catalog", async () => {
     const ctx = new Context();
     context = ctx;
     await ctx.plugin(MemorySettings);
-    const settings = ctx.settings as MemorySettings;
+    const settings = ctx.settings as unknown as MemorySettings;
     settings.seed({
-      "openai-codex": { useNativeCompaction: true },
+      "llm-openai-codex": { useNativeCompaction: true },
     });
     const policy = new ImageToolPolicy({}, [
       { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", contextWindow: 272_000 },

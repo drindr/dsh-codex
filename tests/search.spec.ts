@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { KNOWN_SESSION_EVENT_TYPES } from '@deepseek-ai/dsh-session'
+import { KNOWN_SESSION_EVENT_TYPES, Session, SessionId, pluginRecordOf } from '@deepseek-ai/dsh-session'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import * as OpenAICodex from '../src/index.ts'
@@ -217,12 +217,14 @@ describe('OpenAI Codex composite plugin', () => {
     vi.stubGlobal('fetch', fetchMock)
     const ctx = new Context()
     context = ctx
-    const append = vi.fn()
+    const session = Session.create(SessionId('session-codex-search'))
     ctx.provide('agents', {
-      currentInitiator: () => ({
-        session: { id: 'session-codex-search', append },
-      }),
+      currentInitiator: () => ({ session }),
     } as never)
+    fetchMock.mockImplementation(async () => {
+      expect(session.snapshotEvents()).toHaveLength(1)
+      return jsonResponse(searchPayload)
+    })
     await ctx.plugin(LlmRuntime)
     await ctx.plugin(WebRuntime, { searchProvider: OpenAICodex.OPENAI_CODEX_SEARCH_PROVIDER })
     const fiber = await ctx.plugin(OpenAICodex, {
@@ -237,12 +239,13 @@ describe('OpenAI Codex composite plugin', () => {
       sources: [{ url: 'https://example.com/a', title: 'A', snippet: 'First' }],
       truncated: true,
     })
-    expect(KNOWN_SESSION_EVENT_TYPES.has(OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT)).toBe(true)
-    expect(KNOWN_SESSION_EVENT_TYPES.has('web/search-model-request')).toBe(false)
-    expect(append).toHaveBeenCalledOnce()
-    expect(append).toHaveBeenCalledWith(
-      OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT,
-      {
+    expect(KNOWN_SESSION_EVENT_TYPES.has(OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT)).toBe(false)
+    const events = session.snapshotEvents()
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      type: OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT,
+      ignorable: true,
+      data: {
         endpoint: OpenAICodex.OPENAI_CODEX_SEARCH_URL,
         body: {
           id: 'session-codex-search',
@@ -257,10 +260,13 @@ describe('OpenAI Codex composite plugin', () => {
           max_output_tokens: 321,
         },
       },
-    )
-    expect(append.mock.invocationCallOrder[0]).toBeLessThan(fetchMock.mock.invocationCallOrder[0] ?? 0)
+    })
+    expect(session.deriveMessages()).toEqual([])
+    const restored = Session.create(SessionId('session-codex-restored'), events)
+    expect(restored.snapshotEvents().map(pluginRecordOf).filter(record => record !== undefined)).toEqual(events.map(pluginRecordOf))
+    expect(restored.deriveMessages()).toEqual([])
     await fiber.dispose()
-    expect(KNOWN_SESSION_EVENT_TYPES.has(OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT)).toBe(true)
+    expect(KNOWN_SESSION_EVENT_TYPES.has(OpenAICodex.OPENAI_CODEX_SEARCH_MODEL_REQUEST_EVENT)).toBe(false)
     await expect(ctx.web.search({ query: 'q' }))
       .rejects.toThrow(expect.objectContaining({ code: 'WEB_PROVIDER_CONFIGURED_MISSING' }))
   })

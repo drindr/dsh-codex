@@ -2,13 +2,19 @@
 
 import {
   createAssistantMessageEventStream,
+  getDeclaredTools,
+  getInitialSystemMessage,
+  getSystemMessageText,
+  resolveTranscript,
+  resolveTranscriptTools,
 } from '@earendil-works/pi-ai'
 import type {
   AssistantMessage,
   AssistantMessageEventStream,
   Api,
-  Context as PiContext,
+  TranscriptContext as PiContext,
   Model,
+  OpenAIResponsesCompat,
   Provider,
   SimpleStreamOptions,
   Usage,
@@ -16,7 +22,9 @@ import type {
 import {
   convertResponsesMessages,
   convertResponsesTools,
+  getResponsesToolSupport,
 } from '@earendil-works/pi-ai/api/openai-responses-shared'
+import { createGrammarToolInputProperties } from '@earendil-works/pi-ai/api/constrained-sampling'
 import type { ResponseApiPreferences } from './tool-policy.ts'
 
 /** Responses endpoint used by the official Codex client, including V2 compaction. */
@@ -426,33 +434,50 @@ export class OpenAICodexResponseRuntime {
   ): Promise<CompactResponse> {
     const access = options?.apiKey
     if (access === undefined || access.length === 0) throw new Error('OpenAI Codex compact request has no OAuth token')
-    const messages = context.messages.length === 0 ? [] : context.messages.slice(0, -1)
-    const input = expandNativeCompactionMarkers(convertResponsesMessages(
-      model,
-      { ...context, messages },
-      CODEX_TOOL_CALL_PROVIDERS,
-      { includeSystemPrompt: false },
-    ))
-    const compat = model.compat as { supportsStrictMode?: boolean; supportsOpenAIGrammarTools?: boolean } | undefined
+    const compat = model.compat as OpenAIResponsesCompat | undefined
     const supportsStrictMode = compat?.supportsStrictMode ?? true
     const supportsOpenAIGrammarTools = compat?.supportsOpenAIGrammarTools ?? false
-    const tools = context.tools === undefined || context.tools.length === 0
+    const supportsMidConvoSystemMessages = compat?.supportsMidConvoSystemMessages ?? false
+    const supportsAdditionalTools = compat?.supportsAdditionalTools ?? false
+    const supportsToolSearch = compat?.supportsToolSearch ?? false
+    const transcript = resolveTranscript(context, supportsMidConvoSystemMessages)
+    const messages = transcript.messages.length === 0 ? [] : transcript.messages.slice(0, -1)
+    const grammarToolInputProperties = createGrammarToolInputProperties(
+      getDeclaredTools(messages), supportsOpenAIGrammarTools,
+    )
+    const toolOptions = { strict: null, supportsStrictMode, supportsOpenAIGrammarTools }
+    const input = expandNativeCompactionMarkers(convertResponsesMessages(
+      model,
+      { ...transcript, messages },
+      CODEX_TOOL_CALL_PROVIDERS,
+      {
+        includeSystemPrompt: false,
+        grammarToolInputProperties,
+        supportsMidConvoSystemMessages,
+        supportsAdditionalTools,
+        supportsToolSearch,
+        toolOptions,
+      },
+    ))
+    const transcriptTools = resolveTranscriptTools(messages, getResponsesToolSupport({
+      supportsMidConvoSystemMessages, supportsAdditionalTools, supportsToolSearch,
+    }))
+    const tools = transcriptTools.requestTools.length === 0
       ? undefined
-      : convertResponsesTools(context.tools, {
-          strict: null,
-          supportsStrictMode,
-          supportsOpenAIGrammarTools,
-        })
+      : convertResponsesTools(transcriptTools.requestTools, toolOptions)
+    const initialSystem = getInitialSystemMessage(messages)
     const mappedEffort = options?.reasoning === undefined
       ? undefined
-      : model.thinkingLevelMap?.[options.reasoning] ?? options.reasoning
+      : model.thinkingLevelMap?.[options.reasoning] === null
+        ? undefined
+        : model.thinkingLevelMap?.[options.reasoning] ?? options.reasoning
     const retained = retainedCompactionInput(input)
     let body: unknown = {
       model: wireModelId(model.id),
       store: false,
       stream: true,
       input: [...input, { type: 'compaction_trigger' }],
-      instructions: context.systemPrompt ?? '',
+      instructions: initialSystem === undefined ? '' : getSystemMessageText(initialSystem),
       ...tools === undefined ? {} : { tools },
       tool_choice: 'auto',
       parallel_tool_calls: true,
@@ -483,7 +508,7 @@ export class OpenAICodexResponseRuntime {
       headers.set('thread-id', options.sessionId)
       headers.set('x-client-request-id', options.sessionId)
     }
-    headers.set('x-codex-routing-hint', `model=${model.id}`)
+    headers.set('x-codex-routing-hint', `model=${wireModelId(model.id)}`)
     const maxRetries = Math.min(MAX_NATIVE_COMPACTION_RETRIES, Math.max(0, options?.maxRetries ?? MAX_NATIVE_COMPACTION_RETRIES))
     let lastError: unknown
     for (let attempt = 0; attempt <= maxRetries; attempt++) {

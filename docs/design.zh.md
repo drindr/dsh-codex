@@ -16,7 +16,9 @@ Status: implemented
 
 ## 模型适配器与压缩
 
-bundle 使用公开的 `PiAiAdapter` 以及随附的 `openai-codex` provider 和模型目录。凭据解析器会刷新 OAuth 状态，并把所得 bearer token 作为显式的单次请求凭据传入。它不会发现环境中的 API Key，也不依赖 dsh 的私有适配器辅助函数。按会话维护的 Fast Mode registry 只会为 Web 输入框中已开启开关的会话加入 `service_tier: priority`。升级到 rc.7 后，adapter 还会在读取历史时把旧版 pi-ai replay envelope 提升为当前 response／block 结构，从而保留已有会话的原生 reasoning 与 tool 元数据。
+bundle 面向 DSH `0.2.1-rc.2`，使用公开的 `PiAiAdapter` 以及 pi-ai `1.4.0` 内建的 `openai-codex` provider 和模型目录，不再要求 `dsh-invariants` 包。凭据解析器会刷新 OAuth 状态，并把所得 bearer token 作为显式的单次请求凭据传入。它不会发现环境中的 API Key，也不依赖 dsh 的私有适配器辅助函数。按会话维护的 Fast Mode registry 只会为 Web 输入框中已开启开关的会话加入 `service_tier: priority`。adapter 还会在读取历史时把旧版 pi-ai replay envelope 提升为当前 response／block 结构，从而保留已有会话的原生 reasoning 与 tool 元数据。
+
+目录包含上下文为 272,000 tokens 的 `gpt-6-astra`、`gpt-6-sol` 和 `gpt-6-luna`，以及 500,000 tokens 的 `gpt-6.1-sol`；推理档位与输入能力也来自该目录。保留的 `gpt-5.6-sol-1m` 别名提供 1,050,000 tokens，并在发送时还原为 `gpt-5.6-sol`；默认模型仍为 `gpt-5.6-sol`。
 
 因此，普通轮次与 `dsh-compaction-basic` 都经过标准 LLM 服务。消息转换、流式输出、工具调用、图片附件解析、用量、溢出分类、加密推理回放和取消仍由适配器负责。Codex 请求始终使用 `store: false`，所以回放数据及完整的工具调用／结果配对保存在 Harness session 中，不依赖服务端持久化的 response id。
 
@@ -38,7 +40,7 @@ Codex 模型从 provider 目录继承其声明的输入模态。现有 dsh Web �
 
 `imagegen` 始终调用固定的 ChatGPT Codex `gpt-image-2` 端点，与当前对话模型相互独立。调用方仍须声明图片输入能力，因为工具结果包含供下一轮模型使用的图片块。纯生成不带参考图；编辑可以接收最多五个工作区路径，或最近一至五张会话图片附件。这两种选择器互斥。路径读取使用 `ctx.fs`，会话参考图使用附件存储。base64 data URL 只存在于私有的提供方请求中。
 
-每张生成的 PNG 都会保存为附件并写入当前工作区。`output_path` 用来指定位置；省略时，插件会创建防冲突的 `generated-<时间戳>-<id>.png` 文件名。插件为 `imagegen` 注册了专用工具视图，通过所属会话读取持久附件，在对话中直接显示缩略图并支持查看原图。已发布的 dsh 版本尚未公开二进制写入原语，因此插件包含本地原子写入兼容层；它只处理 `file:` 目标，并在写入前执行当前沙箱策略。非文件执行世界必须提供 `writeBytes`；`dsh-remote-ssh` 已实现该方法，并且只在 AHP 传输内部把字节编码为 base64。远程目标绝不回退到宿主路径。如果沙箱策略或文件系统能力拒绝写入，附件仍然可用，工具结果会报告保存失败。
+每张生成的 PNG 都会保存为附件并写入当前工作区。`output_path` 用来指定位置；省略时，插件会创建防冲突的 `generated-<时间戳>-<id>.png` 文件名。插件为 `imagegen` 注册了专用工具视图，采用宿主提供的会话授权图片加载器与展开状态 Hook，通过惰性参数 API 处理 preparing／start／result 阶段，在对话中显示缩略图并支持查看原图。已发布的 dsh 版本尚未公开二进制写入原语，因此插件包含本地原子写入兼容层；它只处理 `file:` 目标，并在写入前执行当前沙箱策略。非文件执行世界必须提供 `writeBytes`；`dsh-remote-ssh` 已实现该方法，并且只在 AHP 传输内部把字节编码为 base64。远程目标绝不回退到宿主路径。如果沙箱策略或文件系统能力拒绝写入，附件仍然可用，工具结果会报告保存失败。
 
 实时设置会持久化两个独立开关。`modifyReadImage` 为每个实时 agent 添加或撤销 scoped `read_image` 定义；关闭后立即恢复 Harness 原始定义及其 Schema。`shareImagegenWithOtherModels` 决定其他提供方的视觉模型能否执行 `imagegen`，Codex 视觉模型始终保留访问权。两项默认均为开启。
 
@@ -46,9 +48,9 @@ Codex 模型从 provider 目录继承其声明的输入模态。现有 dsh Web �
 
 bundle 为 dsh 现有的 `web_search` 工具注册提供方。它使用 Codex 独立搜索端点与同一份可刷新 OAuth 凭据，把结构化文本结果转换为规范化的 HTTP(S) 引用，并支持 cached、indexed 和 live 模式。端点固定，profile 配置无法把 bearer token 重定向到其他地址。
 
-每次发送前，提供方都会把已经解析默认值且不含凭据的 `{ endpoint, body }` 精确记录为 `web/openai-codex-search-llm-request`。这个专用事件归插件所有：它通过声明合并加入 `SessionEventMap`，并在插件加载时注册到当前进程的 session 事件词汇。注册会保留到进程结束，避免热重载使已经写入的 session 突然无法读取。
+每次发送前，提供方会通过 `appendPluginRecord`，将已经解析默认值且不含凭据的 `{ endpoint, body }` 记录为 `plugin:dsh-codex/search-llm-request`。该事件在 `PluginRecordMap` 中声明，是不进入模型可见历史的可忽略信息记录；它使用公开的 session 扩展 API，不修改核心事件词汇。
 
-插件绝不会写入已停用的通用 `web/search-model-request` 事件。包含 Codex 专用事件的 session 必须在本插件已加载时读取，因为该请求属于模型可见历史，不能标记为可忽略。
+插件不再写入 `web/openai-codex-search-llm-request` 或已停用的通用 `web/search-model-request`。更新新记录的格式不会改写旧 session 文件，历史迁移仍需单独处理。
 
 ## 组合
 

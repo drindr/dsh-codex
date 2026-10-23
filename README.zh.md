@@ -57,6 +57,8 @@ bundle 会为新建 agent 选择 `openai-codex` / `gpt-5.6-sol`，并选择 Code
 
 ## 模型目录
 
+pi-ai `1.4.0` 内建目录包含 `gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna` 和 `gpt-6.1-sol`，并沿用提供方声明的推理档位与输入能力。Codex 目录中的三个 GPT-6 条目默认上下文均为 272,000 tokens，GPT-6.1 Sol 为 500,000 tokens。保留的本地 `gpt-5.6-sol-1m` 别名提供 1,050,000 tokens，并将请求路由到 `gpt-5.6-sol`。默认模型仍为 `gpt-5.6-sol`，升级不会替换已有选择。
+
 默认情况下，模型选择器会展示完整的 `openai-codex` 目录。打开 **设置 → OpenAI Codex**，通过模型复选框选择需要显示的条目。该选择实时生效并持久保存；修改后 dsh 会刷新 Web 与 TUI 的模型目录。
 
 也可以在 `llm-openai-codex` 条目上通过 `models` 设置初始子集，并保持提供方原有顺序：
@@ -148,7 +150,7 @@ dsh 登录与 Codex CLI／Desktop 相互独立：
 
 ## 兼容性说明
 
-- 本分支基于 DSH `0.1.2-rc.1` 插件表层构建，并保留 `0.1.1-rc.2` 兼容性基线。当前构建使用 `@earendil-works/pi-ai` `0.85.1`；诊断明确接受 `0.84.4` 和 `0.85.1`，不会将较宽依赖范围内的所有版本都认定为兼容。adapter 会在读取历史时迁移旧版 pi-ai replay envelope，因此升级后已有 reasoning／tool 元数据仍可继续使用。
+- 本分支基于 DSH `0.2.1-rc.2` 和 `@earendil-works/pi-ai` `1.4.0` 构建并测试，采用当前的 settings、session plugin record 与浏览器工具视图 API，不再要求旧的 `dsh-invariants` 包。兼容性诊断接受 pi-ai `1.4.0`；不再支持此前的 DSH 0.1／pi-ai 0.8x 基线。adapter 仍会在读取历史时迁移旧版 pi-ai replay envelope。
 - 插件只使用已发布的 dsh 插件表层，不要求修改版 Harness checkout。单独安装时即可生成附件并保存本地输出。
 - ChatGPT 套餐资格、模型权限、配额及后端行为由 OpenAI 控制，可能发生变化。
 - Codex 端点不执行普通 Responses 的 `max_output_tokens` 字段。压缩可以工作，但该路由无法在服务端落实配置的摘要上限。

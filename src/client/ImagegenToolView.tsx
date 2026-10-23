@@ -7,11 +7,10 @@ import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { ToolCallViewProps } from '@deepseek-ai/dsh-client-ui-tool/client'
 import type { OpenAICodexSettingsKey } from './locales.ts'
 
-export type ImageLoader = (attachment: ImageAttachmentRef) => Promise<string>
+export type ImageLoader = ToolCallViewProps['loadImage']
 
-type ImagegenToolViewProps = ToolCallViewProps
+type ImagegenToolViewProps = Pick<ToolCallViewProps, 'block' | 'toolName' | 'openFile' | 'inspect' | 'loadImage' | 'useDisclosure'>
   & {
-    loadImage: ImageLoader
     t: (key: OpenAICodexSettingsKey, params?: Record<string, unknown>) => string
   }
 
@@ -66,7 +65,12 @@ function resultParts(block: ToolCallViewProps['block']): {
 }
 
 function argsRaw(block: ToolCallViewProps['block']): string {
-  return 'kind' in block ? block.call?.argsRaw ?? '{}' : block.argsRaw
+  if ('kind' in block) return block.call?.argsRaw ?? '{}'
+  if (block.phase === 'start') return block.argsRaw
+  // Preparing calls expose a lazy, growing argument view, not raw JSON.
+  return JSON.stringify(Object.fromEntries(block.args.keys().map(key => [
+    key, block.args.text(key) ?? block.args.value(key),
+  ])))
 }
 
 function prettyJson(raw: string): string {
@@ -75,14 +79,6 @@ function prettyJson(raw: string): string {
   } catch {
     return raw
   }
-}
-
-function promptSummary(raw: string): string {
-  try {
-    const value: unknown = JSON.parse(raw)
-    if (typeof value === 'object' && value !== null && 'prompt' in value && typeof value.prompt === 'string') return value.prompt
-  } catch {}
-  return raw
 }
 
 function resultOutput(result: ReturnType<typeof resultParts>): string {
@@ -159,15 +155,15 @@ function GeneratedImage({ attachment, load, t }: {
 }
 
 /** A visible imagegen row: its generated attachment stays in the transcript and opens at original size. */
-export function ImagegenToolView({ block, toolName, openFile, inspect, loadImage, t }: ImagegenToolViewProps) {
-  const [expanded, setExpanded] = useState(false)
+export function ImagegenToolView({ block, toolName, openFile, inspect, loadImage, useDisclosure, t }: ImagegenToolViewProps) {
+  const { expanded, toggle } = useDisclosure()
   const result = resultParts(block)
-  const input = argsRaw(block)
-  const summary = promptSummary(input)
+  const input = expanded ? argsRaw(block) : ''
+  const summary = block.args.textPrefix('prompt', 500) ?? ''
   const output = resultOutput(result)
   return (
     <div style={rootStyle} data-tool="imagegen">
-      <button type="button" style={rowStyle} aria-expanded={expanded} onClick={() => { setExpanded(value => !value) }}>
+      <button type="button" style={rowStyle} aria-expanded={expanded} onClick={toggle}>
         <span aria-hidden="true" style={{ ...iconStyle, transform: expanded ? 'rotate(90deg)' : undefined }}>›</span>
         <span style={titleStyle}>{t('toolCallTitle')}</span>
         <span aria-hidden="true" style={separatorStyle} />

@@ -147,7 +147,7 @@ export function enhancedReadImageTool(
       if (exec.parent !== undefined) {
         exec.deferContext(createUserMessage({
           content: contentOf(value),
-          source: { kind: 'plugin', plugin: 'dsh-openai-codex' },
+          source: { kind: 'tool', callId: exec.callId },
         }))
       }
       return value
@@ -217,7 +217,7 @@ export function installReadImageEnhancement(
 
   // Reconcile through syncAll so the tools/change emitted by a scoped
   // registration cannot re-enter before its installed record is committed.
-  ctx.on('agent/created', () => { syncAll() })
+  ctx.on('agent/created', () => { syncAll(); return undefined })
   ctx.on('agent/disposed', ({ agent }) => { installed.delete(agent) })
   ctx.on('tools/change', () => { syncAll(true) })
   const stopPolicy = policy.watchImagePreferences(() => { syncAll() })

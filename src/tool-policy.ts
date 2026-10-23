@@ -1,7 +1,7 @@
-import type { Context } from "@deepseek-ai/cordis";
+import type { Context, Fiber } from "@deepseek-ai/cordis";
+import type {} from "@deepseek-ai/cordis-plugin-loader";
 import type {
   SettingsNamespace,
-  SettingsScope,
 } from "@deepseek-ai/dsh-settings";
 import type { ToolExecution } from "@deepseek-ai/dsh-tools";
 import z from "@deepseek-ai/schemastery";
@@ -72,7 +72,18 @@ export const DEFAULT_CONTEXT_WINDOW_PREFERENCES: ContextWindowPreferences = {
   overrideSparkContextWindow: false,
 };
 
-const NAMESPACE = "openai-codex" as SettingsNamespace;
+/** Settings belong to the owning profile entry in dsh 0.2 and later. */
+export interface OpenAICodexSettingsBinding {
+  namespace?: string;
+  owner?: Fiber;
+  /** Read committed volatile Config references without depending on form notifications. */
+  read?: () => Partial<OpenAICodexPreferences>;
+}
+
+interface PreferenceScope {
+  update(patch: Partial<OpenAICodexPreferences>): Promise<void>;
+  refresh(): void;
+}
 
 function preferenceSchema(
   defaultModels: readonly string[]
@@ -97,7 +108,8 @@ function preferenceSchema(
 /** Live policy shared by the host tools, Codex adapter, and settings HTTP surface. */
 export class ImageToolPolicy {
   private current: OpenAICodexPreferences;
-  private scope: SettingsScope<OpenAICodexPreferences> | undefined;
+  private scope: PreferenceScope | undefined;
+  private readonly base: OpenAICodexPreferences;
   private readonly imageWatchers = new Set<() => void>();
   private readonly modelCatalog: readonly ModelCatalogEntry[];
 
@@ -118,31 +130,65 @@ export class ImageToolPolicy {
     };
     if (
       this.current.useStatefulResponses &&
-      base.useWebSocketContextReuse === undefined
+      !this.current.useWebSocketContextReuse
     ) {
       this.current = { ...this.current, useWebSocketContextReuse: true };
     }
+    this.base = { ...this.current, models: [...this.current.models] };
   }
 
-  /** Register durable live settings when the active profile supplies ctx.settings. */
-  attach(ctx: Context): void {
-    const scope = ctx.settings.register(
-      NAMESPACE,
-      preferenceSchema(this.current.models),
-      { base: this.current, applies: "live" }
-    );
+  /** Bind preferences to the current profile entry's live Config fields. */
+  attach(ctx: Context, binding: OpenAICodexSettingsBinding = {}): void {
+    const owner = binding.owner ?? ctx.fiber;
+    const namespace = binding.namespace ?? owner.entry?.options.id ?? "llm-openai-codex";
+    const settings = ctx.settings;
+    const schema = preferenceSchema(this.base.models);
+    const refresh = (): void => {
+      if (binding.read !== undefined) {
+        this.applyPreferences(binding.read());
+        return;
+      }
+      const descriptor = settings.describe().find((entry) => String(entry.ns) === namespace);
+      if (descriptor === undefined) return;
+      if (typeof descriptor.value !== "object" || descriptor.value === null || Array.isArray(descriptor.value)) {
+        throw new Error("OpenAI Codex settings must be an object");
+      }
+      this.replace(schema({
+        ...this.base,
+        // Optional Config fields disappear from forms when reset. Do not
+        // resurrect an initial user override from the constructor snapshot.
+        models: this.modelCatalog.map((model) => model.id),
+        contextWindow: null,
+        ...descriptor.value,
+      }));
+    };
+    const scope: PreferenceScope = {
+      update: async (patch) => {
+        await settings.update(namespace, patch);
+        refresh();
+      },
+      refresh,
+    };
     this.scope = scope;
-    this.replace(scope.get());
-    const unwatch = scope.watch((next) => {
-      this.replace(next);
+    ctx.effect(() => settings.configure({ auto: false }, owner), "dsh-openai-codex: settings page");
+    refresh();
+    ctx.on("settings/document-updated", (changed: SettingsNamespace) => {
+      if (String(changed) === namespace) refresh();
     });
     ctx.effect(
       () => () => {
-        unwatch();
         if (this.scope === scope) this.scope = undefined;
       },
       "dsh-openai-codex: preferences"
     );
+  }
+
+  /** Apply the owning plugin's committed live Config values. */
+  applyPreferences(preferences: Partial<OpenAICodexPreferences>): void {
+    this.replace(preferenceSchema(this.modelCatalog.map((model) => model.id))({
+      ...this.base,
+      ...preferences,
+    }));
   }
 
   /** Return a detached settings projection for the browser. */
@@ -168,7 +214,7 @@ export class ImageToolPolicy {
     if (this.scope === undefined)
       throw new Error("OpenAI Codex settings service is unavailable");
     await this.scope.update(patch);
-    this.replace(this.scope.get());
+    this.scope.refresh();
     return this.snapshot();
   }
 
@@ -192,7 +238,7 @@ export class ImageToolPolicy {
         ? {}
         : { useStatefulResponses: false }),
     });
-    this.replace(this.scope.get());
+    this.scope.refresh();
     return this.responseApiSnapshot();
   }
 
@@ -211,7 +257,7 @@ export class ImageToolPolicy {
     if (this.scope === undefined)
       throw new Error("OpenAI Codex settings service is unavailable");
     await this.scope.update(patch);
-    this.replace(this.scope.get());
+    this.scope.refresh();
     return this.contextWindowSnapshot();
   }
 
@@ -231,7 +277,7 @@ export class ImageToolPolicy {
       throw new Error("OpenAI Codex settings service is unavailable");
     if (patch.models === undefined) return this.modelCatalogSnapshot();
     await this.scope.update({ models: this.normalizeModels(patch.models) });
-    this.replace(this.scope.get());
+    this.scope.refresh();
     return this.modelCatalogSnapshot();
   }
 

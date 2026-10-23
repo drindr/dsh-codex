@@ -16,6 +16,7 @@ import type {
   ModelCatalogEntry,
   ModelCatalogSettings,
   ResponseApiPreferences,
+  OpenAICodexSettingsBinding,
 } from "./tool-policy.ts";
 import { readOpenAICodexRateLimits } from "./usage.ts";
 import type { OpenAICodexUsage } from "./usage.ts";
@@ -32,8 +33,11 @@ export interface OpenAICodexServiceOptions
   extends
     ImageToolPreferences,
     ResponseApiPreferences,
+  OpenAICodexSettingsBinding,
     ContextWindowPreferences {
   models?: string[];
+  /** Legacy preference accepted while migrating existing settings. */
+  useStatefulResponses?: boolean;
   modelCatalog: readonly ModelCatalogEntry[];
 }
 
@@ -50,8 +54,8 @@ export class OpenAICodexService {
   }
 
   /** Attach the durable settings document when the active profile provides it. */
-  attachSettings(ctx: Context): void {
-    this.policy.attach(ctx);
+  attachSettings(ctx: Context, binding: OpenAICodexSettingsBinding = {}): void {
+    this.policy.attach(ctx, binding);
   }
 
   /** Start the provider-native OAuth lifecycle. */

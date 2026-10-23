@@ -4,16 +4,16 @@ import { fileURLToPath } from 'node:url'
 
 export const COMPATIBILITY_SCHEMA_VERSION = 1 as const
 export const SUPPORTED_NODE_RANGE = '^22.19.0 || >=24.0.0'
-export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.1.2-rc.1'
+export const SUPPORTED_DSH_PLUGIN_API_VERSION = '0.2.1-rc.2'
 /**
  * Every DSH plugin API version accepted by the compatibility probe, oldest
  * first. The first entry is the minimum version used by range comparison;
- * later same-major versions are accepted through semver precedence.
+ * later releases on the same minor line are accepted through semver precedence.
  */
-export const SUPPORTED_DSH_PLUGIN_API_VERSIONS = ['0.1.1-rc.2', '0.1.2-rc.1'] as const
-export const SUPPORTED_PI_AI_VERSION = '0.85.1'
+export const SUPPORTED_DSH_PLUGIN_API_VERSIONS = [SUPPORTED_DSH_PLUGIN_API_VERSION] as const
+export const SUPPORTED_PI_AI_VERSION = '1.4.0'
 /** Explicitly supported releases; do not infer compatibility across pi-ai minor versions. */
-export const SUPPORTED_PI_AI_VERSIONS = ['0.84.4', SUPPORTED_PI_AI_VERSION] as const
+export const SUPPORTED_PI_AI_VERSIONS = [SUPPORTED_PI_AI_VERSION] as const
 export const PI_AI_PACKAGE = '@earendil-works/pi-ai'
 
 export const DSH_PLUGIN_API_PACKAGES = [
@@ -22,7 +22,6 @@ export const DSH_PLUGIN_API_PACKAGES = [
   '@deepseek-ai/dsh-attachment',
   '@deepseek-ai/dsh-home-paths',
   '@deepseek-ai/dsh-host-webserver',
-  '@deepseek-ai/dsh-invariants',
   '@deepseek-ai/dsh-llm',
   '@deepseek-ai/dsh-llm-pi-ai',
   '@deepseek-ai/dsh-fs',
@@ -145,16 +144,16 @@ function compareVersion(left: string, right: string): CompatibilityStatus {
 }
 
 /**
- * DSH plugin API comparison: any listed version, or a same-major version at
+ * DSH plugin API comparison: any listed version, or a same-minor version at
  * or above the oldest supported one by prerelease-aware semver precedence
- * (so 0.1.2-rc.1 satisfies a 0.1.1-rc.2 minimum).
+ * within the validated DSH 0.2 API line.
  */
 function dshPluginApiStatus(installed: string): CompatibilityStatus {
   if ((SUPPORTED_DSH_PLUGIN_API_VERSIONS as readonly string[]).includes(installed)) return 'compatible'
   const parsed = parseSemver(installed)
   const minimum = parseSemver(SUPPORTED_DSH_PLUGIN_API_VERSIONS[0])
   if (parsed === undefined || minimum === undefined) return 'incompatible'
-  if (parsed.major !== minimum.major) return 'incompatible'
+  if (parsed.major !== minimum.major || parsed.minor !== minimum.minor) return 'incompatible'
   return compareSemver(parsed, minimum) >= 0 ? 'compatible' : 'incompatible'
 }
 

@@ -222,7 +222,6 @@ function contentOf(value: ImagegenValue): ContentBlock[] {
 function collectImageRefs(content: readonly ContentBlock[], output: ImageAttachmentRef[]): void {
   for (const block of content) {
     if (block.type === 'image') output.push(block.attachment)
-    else if (block.type === 'tool-result') collectImageRefs(block.content, output)
   }
 }
 
@@ -379,7 +378,7 @@ export function imagegenTool(
       if (exec.parent !== undefined) {
         exec.deferContext(createUserMessage({
           content: contentOf(value),
-          source: { kind: 'plugin', plugin: 'dsh-openai-codex' },
+          source: { kind: 'tool', callId: exec.callId },
         }))
       }
       return value

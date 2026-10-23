@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { normalizeContext } from '@earendil-works/pi-ai'
+import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
+import { OpenAICodexResponseRuntime } from '../src/responses.ts'
 import {
   BlockAssembler,
   ToolCallId,
@@ -104,6 +107,55 @@ function userMessage(text: string) {
 }
 
 describe('OpenAI Codex compaction request', () => {
+  it('keeps normalized system and tool declarations in GPT-6 native compaction', async () => {
+    const provider = openaiCodexProvider()
+    const model = provider.getModels().find(candidate => candidate.id === 'gpt-6.1-sol')
+    if (model === undefined) throw new Error('missing GPT-6.1 Sol catalog entry')
+    const runtime = new OpenAICodexResponseRuntime(() => ({
+      useWebSocketContextReuse: false, useNativeCompaction: true,
+    }))
+    let body: Record<string, unknown> | undefined
+    vi.stubGlobal('fetch', async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init === undefined) throw new Error('expected request init')
+      body = requestJson(init)
+      return new Response(compactionEvents(), {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      })
+    })
+    const leave = runtime.enterCompaction('normalized-compaction')
+    try {
+      const result = await runtime.wrap(provider).streamSimple(model, normalizeContext({
+        systemPrompt: 'Preserve project decisions.',
+        tools: [{
+          name: 'read_file', description: 'Read a project file.',
+          parameters: { type: 'object', properties: {}, additionalProperties: false } as never,
+        }],
+        messages: [
+          { role: 'user', content: 'Read README.md', timestamp: 0 },
+          { role: 'user', content: 'private summary instruction', timestamp: 1 },
+        ],
+      }), {
+        apiKey: accessToken('test-account'), sessionId: 'normalized-compaction', reasoning: 'max',
+      }).result()
+      expect(result.stopReason).toBe('stop')
+      expect(body).toMatchObject({
+        model: 'gpt-6.1-sol', instructions: 'Preserve project decisions.',
+        reasoning: { effort: 'max' },
+      })
+      expect(body?.input).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'additional_tools',
+          tools: expect.arrayContaining([expect.objectContaining({ name: 'read_file' })]),
+        }),
+        { role: 'user', content: [{ type: 'input_text', text: 'Read README.md' }] },
+        { type: 'compaction_trigger' },
+      ]))
+      expect(JSON.stringify(body)).not.toContain('private summary instruction')
+    } finally {
+      leave()
+    }
+  })
+
   it('keeps stateless reasoning and paired tool history without sending a standard output cap', async () => {
     root = await mkdtemp(join(tmpdir(), 'dsh-openai-codex-compaction-'))
     vi.stubEnv('DSH_HOME', root)
@@ -165,7 +217,7 @@ describe('OpenAI Codex compaction request', () => {
       }),
       createUserMessage({
         content: [{ type: 'text', text: 'Summarize the conversation for compaction.' }],
-        source: { kind: 'plugin', plugin: 'compaction-basic' },
+        source: { kind: 'user' },
       }),
     ]
 
@@ -185,7 +237,7 @@ describe('OpenAI Codex compaction request', () => {
       sessionId: 'session-compaction' as never,
     })) assembler.push(chunk)
 
-    expect(assembler.message({ kind: 'model', provider: 'openai-codex', model: 'gpt-5.6-sol' }).content)
+    expect(assembler.message({ provider: 'openai-codex', model: 'gpt-5.6-sol' }).content)
       .toEqual([{ type: 'text', text: 'summary' }])
     if (request === undefined) throw new Error('Codex request was not captured')
     const captured = request as { url: string; init: RequestInit }
@@ -271,13 +323,12 @@ describe('OpenAI Codex compaction request', () => {
         userMessage('keep this request'),
         createUserMessage({
           content: [{ type: 'text', text: 'private Harness summary instruction' }],
-          source: { kind: 'plugin', plugin: 'compaction-basic' },
+          source: { kind: 'user' },
         }),
       ],
       sessionId: 'session-native-compact' as never,
     })) compacted.push(chunk)
     const marker = compacted.message({
-      kind: 'model',
       provider: 'openai-codex',
       model: 'gpt-5.6-sol',
     }).content
@@ -290,7 +341,7 @@ describe('OpenAI Codex compaction request', () => {
       messages: [
         createUserMessage({
           content: marker,
-          source: { kind: 'plugin', plugin: 'compaction-basic' },
+          source: { kind: 'user' },
         }),
         userMessage('continue'),
       ],
@@ -367,14 +418,13 @@ describe('OpenAI Codex compaction request', () => {
         userMessage('keep this request'),
         createUserMessage({
           content: [{ type: 'text', text: 'Summarize the conversation.' }],
-          source: { kind: 'plugin', plugin: 'compaction-basic' },
+          source: { kind: 'user' },
         }),
       ],
       sessionId: 'session-native-fallback' as never,
     })) assembler.push(chunk)
 
     expect(assembler.message({
-      kind: 'model',
       provider: 'openai-codex',
       model: 'gpt-5.6-sol',
     }).content).toEqual([{ type: 'text', text: 'fallback summary' }])

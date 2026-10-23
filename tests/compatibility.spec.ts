@@ -30,10 +30,10 @@ describe('compatibility contract', () => {
     })
   })
 
-  it('accepts the legacy and current pi-ai releases with either supported DSH API', () => {
-    expect(COMPATIBILITY_CONTRACT.piAi.versions).toEqual(['0.84.4', '0.85.1'])
-    for (const dsh of ['0.1.1-rc.2', '0.1.2-rc.1']) {
-      for (const piAi of ['0.84.4', '0.85.1']) {
+  it('accepts the validated pi-ai release with the supported DSH API', () => {
+    expect(COMPATIBILITY_CONTRACT.piAi.versions).toEqual(['1.4.0'])
+    for (const dsh of ['0.2.1-rc.2']) {
+      for (const piAi of ['1.4.0']) {
         const report = evaluateCompatibility({
           nodeVersion: 'v24.0.0',
           packageVersions: {
@@ -48,7 +48,7 @@ describe('compatibility contract', () => {
   })
 
   it('does not claim compatibility for unverified pi-ai versions', () => {
-    for (const installed of ['0.84.3', '0.84.5', '0.85.0', '0.85.1-rc.1', '0.85.2', '0.86.0', '1.0.0', 'not-a-version']) {
+    for (const installed of ['0.84.3', '0.84.5', '0.85.0', '0.85.1-rc.1', '0.85.2', '0.86.0', '1.0.0', '1.4.1', '2.0.0', 'not-a-version']) {
       const report = evaluateCompatibility({
         nodeVersion: 'v24.0.0',
         packageVersions: { ...compatiblePackages, '@earendil-works/pi-ai': installed },
@@ -66,8 +66,8 @@ describe('compatibility contract', () => {
     expect(report.packages['@earendil-works/pi-ai']).toMatchObject({ installed: '0.82.2', status: 'incompatible' })
   })
 
-  it('accepts every listed DSH plugin API version and newer same-major prereleases', () => {
-    for (const installed of ['0.1.1-rc.2', '0.1.2-rc.1', '0.1.2-rc.2', '0.1.2', '0.1.3-rc.1']) {
+  it('accepts every listed DSH plugin API version and newer same-minor releases', () => {
+    for (const installed of ['0.2.1-rc.2', '0.2.1', '0.2.2']) {
       const report = evaluateCompatibility({
         nodeVersion: 'v24.0.0',
         packageVersions: { ...compatiblePackages, '@deepseek-ai/dsh-llm': installed },
@@ -76,8 +76,8 @@ describe('compatibility contract', () => {
     }
   })
 
-  it('rejects DSH plugin API versions below the supported minimum or past the major line', () => {
-    for (const installed of ['0.1.0-rc.6', '0.1.1-rc.1', '1.0.0', 'not-a-version']) {
+  it('rejects DSH plugin API versions below the supported minimum or outside the validated minor line', () => {
+    for (const installed of ['0.1.2-rc.1', '0.2.1-rc.1', '0.3.0', '1.0.0', 'not-a-version']) {
       const report = evaluateCompatibility({
         nodeVersion: 'v24.0.0',
         packageVersions: { ...compatiblePackages, '@deepseek-ai/dsh-llm': installed },

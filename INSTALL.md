@@ -23,6 +23,10 @@ The bundle uses standard dsh plugin APIs. Do not patch, fork, build, or commit c
 - Preserve every unrelated profile dependency, bundle, and `cordis.patch.yml` row.
 - OAuth approval belongs to the user. Never request an OpenAI password or attempt to complete the account page for them.
 
+## Compatibility
+
+This checkout targets DSH `0.2.1-rc.2` and `@earendil-works/pi-ai` `1.4.0`; do not install the former `dsh-invariants` package. Use matching Host and browser artifacts from the same build. The built-in catalog includes `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna` (272K context), and `gpt-6.1-sol` (500K context), plus the retained `gpt-5.6-sol-1m` alias (1,050K). Keep the existing `gpt-5.6-sol` default and any saved user selection unless the user requests a change.
+
 ## Procedure
 
 ### 1. Validate the launcher
@@ -111,7 +115,8 @@ For the `web` profile, start `dsh web` if the user wants the application running
 - the root page loads;
 - its boot manifest contains `dsh-codex` and the plugin `client.js` URL;
 - `GET /plugins/dsh-openai-codex/auth/status` returns JSON without credentials;
-- Settings contains an **OpenAI Codex** section.
+- Settings contains an **OpenAI Codex** section;
+- its model catalog includes the four GPT-6 entries above, unless a saved `models` subset intentionally hides them.
 
 Do not call the login endpoint as a health check because it starts OAuth. The Web composer already owns image paste and drop; do not patch dsh for Ctrl+V. The bundle can extend Harness's `read_image` with HTTP(S) URL input and adds `imagegen`; the current model route must explicitly advertise image input before either tool returns an image. `imagegen.output_path` is optional: without it, the plugin writes a uniquely named PNG in the active workspace. The generated attachment remains available when policy or filesystem capability refuses that write.
 
